@@ -36,7 +36,7 @@ type (
 	coordPutResp struct {
 		Version Version
 		Acks    int
-		Err     error
+		Err     string // non-empty when the quorum was not reached
 	}
 
 	coordGetReq struct {
@@ -47,11 +47,27 @@ type (
 	coordGetResp struct {
 		Versions []Version
 		Replies  int
-		Err      error
+		Err      string
 	}
 
 	syncReq  struct{ Items map[string][]Version }
 	syncResp struct{ Items map[string][]Version }
+
+	// Liveness probe used by the TCP failure detector.
+	pingReq  struct{}
+	pingResp struct{}
+
+	// Admin: run anti-entropy with every reachable peer now.
+	syncAllReq  struct{}
+	syncAllResp struct{ Peers int }
+
+	// Admin: return this node's full state (owned data and hints).
+	dumpReq  struct{}
+	dumpResp struct {
+		Data      map[string][]Version
+		HintCount int
+		Recovered int // WAL records replayed at startup
+	}
 )
 
 // NodeConfig configures a replica.
@@ -67,14 +83,20 @@ type NodeConfig struct {
 	// of the coordinator's whole sibling set (kept to measure why the
 	// default matters).
 	ReplicateNewOnly bool
+	// EntropyInterval runs anti-entropy with all reachable peers
+	// periodically (0 = only when triggered).
+	EntropyInterval time.Duration
 }
 
 // Node is one storage replica. Any node can coordinate a request.
 type Node struct {
 	ID   string
 	cfg  NodeConfig
-	net  *Network
+	net  Transport
 	ring *Ring
+	wal  *WAL
+
+	recovered int // WAL records replayed when the node started
 
 	mu     sync.Mutex
 	data   map[string][]Version
@@ -90,45 +112,128 @@ type Node struct {
 // Coordinated returns how many client requests this node coordinated.
 func (nd *Node) Coordinated() int64 { return nd.coordinated.Load() }
 
-func newNode(id string, cfg NodeConfig, net *Network, ring *Ring) *Node {
+// NewNode creates a replica. If wal is non-nil the node first rebuilds its
+// state by replaying the log, then rewrites the log as a compact checkpoint.
+// The caller attaches Handle to its transport and calls Start.
+func NewNode(id string, cfg NodeConfig, tr Transport, ring *Ring, wal *WAL) (*Node, error) {
 	nd := &Node{
-		ID: id, cfg: cfg, net: net, ring: ring,
+		ID: id, cfg: cfg, net: tr, ring: ring, wal: wal,
 		data:   map[string][]Version{},
 		hints:  map[string]map[string][]Version{},
 		issued: map[string]uint64{},
 		stop:   make(chan struct{}),
 	}
-	net.Register(id, nd.handle)
-	return nd
+	if wal != nil && wal.mode != SyncNone {
+		n, err := wal.replay(nd.apply)
+		if err != nil {
+			return nil, err
+		}
+		nd.recovered = n
+		if err := wal.rewrite(nd.checkpoint()); err != nil {
+			return nil, err
+		}
+	}
+	return nd, nil
 }
 
-func (nd *Node) start() {
-	if nd.cfg.HandoffInterval <= 0 {
+// Recovered returns how many WAL records were replayed at startup.
+func (nd *Node) Recovered() int { return nd.recovered }
+
+// apply replays one WAL record into memory.
+func (nd *Node) apply(r walRecord) {
+	switch r.Kind {
+	case recData:
+		nd.data[r.Key] = nd.rules().merge(nd.data[r.Key], r.V...)
+	case recHint:
+		if nd.hints[r.Owner] == nil {
+			nd.hints[r.Owner] = map[string][]Version{}
+		}
+		nd.hints[r.Owner][r.Key] = nd.rules().merge(nd.hints[r.Owner][r.Key], r.V...)
+	case recHintDone:
+		nd.dropDelivered(r.Owner, r.Key, r.V)
+	case recIssued:
+		if r.Issued > nd.issued[r.Key] {
+			nd.issued[r.Key] = r.Issued
+		}
+	}
+}
+
+// checkpoint returns records that recreate the current state.
+func (nd *Node) checkpoint() []walRecord {
+	var out []walRecord
+	for k, vs := range nd.data {
+		out = append(out, walRecord{Kind: recData, Key: k, V: vs})
+	}
+	for owner, m := range nd.hints {
+		for k, vs := range m {
+			out = append(out, walRecord{Kind: recHint, Owner: owner, Key: k, V: vs})
+		}
+	}
+	for k, n := range nd.issued {
+		out = append(out, walRecord{Kind: recIssued, Key: k, Issued: n})
+	}
+	return out
+}
+
+// Start launches background work: hinted handoff and periodic anti-entropy.
+func (nd *Node) Start() {
+	nd.every(nd.cfg.HandoffInterval, nd.handoffHints)
+	nd.every(nd.cfg.EntropyInterval, func() { nd.syncAll() })
+}
+
+func (nd *Node) every(d time.Duration, f func()) {
+	if d <= 0 {
 		return
 	}
 	nd.wg.Add(1)
 	go func() {
 		defer nd.wg.Done()
-		t := time.NewTicker(nd.cfg.HandoffInterval)
+		t := time.NewTicker(d)
 		defer t.Stop()
 		for {
 			select {
 			case <-nd.stop:
 				return
 			case <-t.C:
-				nd.handoffHints()
+				f()
 			}
 		}
 	}()
 }
 
+// syncAll runs anti-entropy with every peer this node can reach.
+func (nd *Node) syncAll() int {
+	n := 0
+	for _, p := range nd.ring.nodes {
+		if p != nd.ID && nd.net.Reachable(nd.ID, p) && nd.syncWith(p) == nil {
+			n++
+		}
+	}
+	return n
+}
+
+// Close stops background work and closes the WAL cleanly.
+func (nd *Node) Close() {
+	close(nd.stop)
+	nd.wg.Wait()
+	nd.wal.Close()
+}
+
+// crash stops the node like kill -9: background work stops and anything
+// not yet written to the WAL file is lost.
+func (nd *Node) crash() {
+	close(nd.stop)
+	nd.wg.Wait()
+	nd.wal.abandon()
+}
+
 func (nd *Node) rules() rules { return rules{policy: nd.cfg.Policy, clocks: nd.cfg.Clocks} }
 
-func (nd *Node) close() { close(nd.stop); nd.wg.Wait() }
-
-func (nd *Node) handle(from string, req any) any {
+// Handle processes one request; transports call it for every delivery.
+func (nd *Node) Handle(from string, req any) any {
 	switch r := req.(type) {
 	case putReq:
+		var rec walRecord
 		nd.mu.Lock()
 		if r.Hint != "" && r.Hint != nd.ID {
 			m := nd.hints[r.Hint]
@@ -137,11 +242,32 @@ func (nd *Node) handle(from string, req any) any {
 				nd.hints[r.Hint] = m
 			}
 			m[r.Key] = nd.rules().merge(m[r.Key], cloneVersions(r.V)...)
+			rec = walRecord{Kind: recHint, Owner: r.Hint, Key: r.Key, V: r.V}
 		} else {
 			nd.data[r.Key] = nd.rules().merge(nd.data[r.Key], cloneVersions(r.V)...)
+			rec = walRecord{Kind: recData, Key: r.Key, V: r.V}
 		}
 		nd.mu.Unlock()
+		// Ack only after the write is in the log (per the WAL's sync mode).
+		if err := nd.wal.append(rec); err != nil {
+			return nil
+		}
 		return putResp{}
+	case pingReq:
+		return pingResp{}
+	case syncAllReq:
+		return syncAllResp{Peers: nd.syncAll()}
+	case dumpReq:
+		nd.mu.Lock()
+		d := dumpResp{Data: map[string][]Version{}, Recovered: nd.recovered}
+		for k, vs := range nd.data {
+			d.Data[k] = cloneVersions(vs)
+		}
+		for _, m := range nd.hints {
+			d.HintCount += len(m)
+		}
+		nd.mu.Unlock()
+		return d
 	case getReq:
 		return getResp{Versions: nd.localRead(r.Key)}
 	case coordPutReq:
@@ -242,8 +368,10 @@ func (nd *Node) coordPut(r coordPutReq) coordPutResp {
 		ctx[nd.ID] = dot.Counter
 	}
 	v := Version{Value: r.Value, Dot: dot, Ctx: ctx, TS: time.Now().Add(nd.cfg.ClockSkew).UnixNano(), Origin: nd.ID}
+	localRecs := []walRecord{{Kind: recIssued, Key: r.Key, Issued: dot.Counter}}
 	if selfIdx >= 0 {
 		nd.data[r.Key] = nd.rules().merge(nd.data[r.Key], v)
+		localRecs = append(localRecs, walRecord{Kind: recData, Key: r.Key, V: []Version{v}})
 	} else {
 		// Not a replica for this key (sloppy fallback): keep the write as a
 		// hint for the first preferred node so it is never lost here.
@@ -252,6 +380,7 @@ func (nd *Node) coordPut(r coordPutReq) coordPutResp {
 			nd.hints[owner] = map[string][]Version{}
 		}
 		nd.hints[owner][r.Key] = nd.rules().merge(nd.hints[owner][r.Key], v)
+		localRecs = append(localRecs, walRecord{Kind: recHint, Owner: owner, Key: r.Key, V: []Version{v}})
 	}
 	snapshot := cloneVersions(nd.data[r.Key])
 	for _, m := range nd.hints {
@@ -264,9 +393,15 @@ func (nd *Node) coordPut(r coordPutReq) coordPutResp {
 
 	rctx, cancel := context.WithTimeout(context.Background(), nd.cfg.ReplicaTimeout)
 	acks := make(chan bool, len(ts))
+	// The local write is logged in parallel with replication; it counts as
+	// this node's ack once it is durable (per the WAL sync mode).
+	if selfIdx >= 0 {
+		go func() { acks <- nd.wal.append(localRecs...) == nil }()
+	} else {
+		nd.wal.append(localRecs...) // coordinator only holds a hint; not an ack
+	}
 	for i, t := range ts {
 		if i == selfIdx {
-			acks <- true
 			continue
 		}
 		go func(t target) {
@@ -286,7 +421,7 @@ func (nd *Node) coordPut(r coordPutReq) coordPutResp {
 	go func() { <-rctx.Done(); cancel() }()
 	resp := coordPutResp{Version: v, Acks: ok}
 	if ok < r.W {
-		resp.Err = fmt.Errorf("%w: put %d/%d acks", ErrUnavailable, ok, r.W)
+		resp.Err = fmt.Sprintf("put %d/%d acks", ok, r.W)
 	}
 	return resp
 }
@@ -323,7 +458,7 @@ func (nd *Node) coordGet(r coordGetReq) coordGetResp {
 	}
 	resp := coordGetResp{Versions: cloneVersions(merged), Replies: len(got)}
 	if len(got) < r.R {
-		resp.Err = fmt.Errorf("%w: get %d/%d replies", ErrUnavailable, len(got), r.R)
+		resp.Err = fmt.Sprintf("get %d/%d replies", len(got), r.R)
 	}
 
 	// Read repair: wait for the stragglers, then push the merged state to
@@ -382,28 +517,38 @@ func (nd *Node) handoffHints() {
 		}
 		cancel()
 		if allOK {
+			var recs []walRecord
 			nd.mu.Lock()
 			for k, vs := range m {
-				// drop only what was delivered; newer hints may have arrived
-				if cur, ok := nd.hints[owner][k]; ok {
-					rest := cur[:0:0]
-					for _, c := range cur {
-						if !nd.rules().covers(vs, c) {
-							rest = append(rest, c)
-						}
-					}
-					if len(rest) == 0 {
-						delete(nd.hints[owner], k)
-					} else {
-						nd.hints[owner][k] = rest
-					}
-				}
-			}
-			if len(nd.hints[owner]) == 0 {
-				delete(nd.hints, owner)
+				nd.dropDelivered(owner, k, vs)
+				recs = append(recs, walRecord{Kind: recHintDone, Owner: owner, Key: k, V: vs})
 			}
 			nd.mu.Unlock()
+			nd.wal.append(recs...)
 		}
+	}
+}
+
+// dropDelivered removes hints for owner/key that delivered covers; newer
+// hints that arrived meanwhile are kept. Caller holds nd.mu (or is replaying).
+func (nd *Node) dropDelivered(owner, key string, delivered []Version) {
+	cur, ok := nd.hints[owner][key]
+	if !ok {
+		return
+	}
+	rest := cur[:0:0]
+	for _, c := range cur {
+		if !nd.rules().covers(delivered, c) {
+			rest = append(rest, c)
+		}
+	}
+	if len(rest) == 0 {
+		delete(nd.hints[owner], key)
+	} else {
+		nd.hints[owner][key] = rest
+	}
+	if len(nd.hints[owner]) == 0 {
+		delete(nd.hints, owner)
 	}
 }
 
@@ -424,11 +569,17 @@ func (nd *Node) itemsFor(peer string) map[string][]Version {
 }
 
 func (nd *Node) absorb(items map[string][]Version) {
+	var recs []walRecord
 	nd.mu.Lock()
-	defer nd.mu.Unlock()
 	for k, vs := range items {
+		before := nd.data[k]
 		nd.data[k] = nd.rules().merge(nd.data[k], cloneVersions(vs)...)
+		if fmt.Sprint(before) != fmt.Sprint(nd.data[k]) { // log only real changes
+			recs = append(recs, walRecord{Kind: recData, Key: k, V: vs})
+		}
 	}
+	nd.mu.Unlock()
+	nd.wal.append(recs...)
 }
 
 func (nd *Node) handleSync(from string, r syncReq) syncResp {

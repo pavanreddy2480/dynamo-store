@@ -17,6 +17,11 @@ type Config struct {
 	Latency LatencyModel
 	Client  LatencyModel
 	Seed    int64
+	// DataDir holds each node's write-ahead log when WAL is not SyncNone.
+	DataDir string
+	WAL     SyncMode
+	// WALFlush is the background flush interval for SyncAsync.
+	WALFlush time.Duration
 }
 
 // DefaultConfig is 5 nodes with 3 replicas per key.
@@ -31,9 +36,10 @@ func DefaultConfig() Config {
 			ReadRepair:      true,
 			HandoffInterval: 5 * time.Millisecond,
 		},
-		Latency: DefaultLatency,
-		Client:  DefaultClientLatency,
-		Seed:    1,
+		Latency:  DefaultLatency,
+		Client:   DefaultClientLatency,
+		Seed:     1,
+		WALFlush: 10 * time.Millisecond,
 	}
 }
 
@@ -60,12 +66,41 @@ func NewCluster(cfg Config) *Cluster {
 		cfg:   cfg,
 	}
 	for _, id := range ids {
-		c.Nodes[id] = newNode(id, cfg.Node, c.Net, c.Ring)
-	}
-	for _, nd := range c.Nodes {
-		nd.start()
+		c.Nodes[id] = c.bootNode(id)
 	}
 	return c
+}
+
+func (c *Cluster) bootNode(id string) *Node {
+	var wal *WAL
+	if c.cfg.WAL != SyncNone {
+		var err error
+		if wal, err = OpenWAL(c.cfg.DataDir, id, c.cfg.WAL, c.cfg.WALFlush); err != nil {
+			panic(err)
+		}
+	}
+	nd, err := NewNode(id, c.cfg.Node, c.Net, c.Ring, wal)
+	if err != nil {
+		panic(err)
+	}
+	c.Net.Register(id, nd.Handle)
+	nd.Start()
+	return nd
+}
+
+// Crash kills node id like kill -9: it stops answering, its memory is
+// discarded and unflushed WAL records are lost.
+func (c *Cluster) Crash(id string) {
+	c.Net.SetDown(id, true)
+	c.Nodes[id].crash()
+}
+
+// Restart boots node id again from its WAL (empty if WAL is SyncNone).
+func (c *Cluster) Restart(id string) *Node {
+	nd := c.bootNode(id)
+	c.Nodes[id] = nd
+	c.Net.SetDown(id, false)
+	return nd
 }
 
 // SetSkew changes one node's wall-clock skew (used by LWW experiments).
@@ -79,7 +114,7 @@ func (c *Cluster) SetSkew(id string, d time.Duration) {
 // Close stops background work.
 func (c *Cluster) Close() {
 	for _, nd := range c.Nodes {
-		nd.close()
+		nd.Close()
 	}
 }
 
@@ -122,11 +157,12 @@ func (c *Cluster) NewClient(id string, r, w int) *Client {
 		panic(fmt.Sprintf("R=%d W=%d must be in [1,%d]", r, w, c.cfg.Node.N))
 	}
 	c.Net.Register(id, nil)
-	return &Client{
-		ID: id, R: r, W: w,
-		Timeout: 3 * c.cfg.Node.ReplicaTimeout,
-		net:     c.Net, ring: c.Ring, n: c.cfg.Node.N,
-	}
+	return NewClient(id, c.Net, c.Ring, c.cfg.Node.N, r, w, 3*c.cfg.Node.ReplicaTimeout)
+}
+
+// NewClient creates a client over any transport (used by real processes).
+func NewClient(id string, tr Transport, ring *Ring, n, r, w int, timeout time.Duration) *Client {
+	return &Client{ID: id, R: r, W: w, Timeout: timeout, net: tr, ring: ring, n: n}
 }
 
 // Client talks to the cluster. R and W are exposed as client settings and
@@ -140,7 +176,7 @@ type Client struct {
 	// replica instead of a random one (compared in cmd/archbench).
 	FirstCoordinator bool
 
-	net  *Network
+	net  Transport
 	ring *Ring
 	n    int
 }
@@ -209,7 +245,14 @@ func (cl *Client) Get(key string) (GetResult, error) {
 	for _, v := range r.Versions {
 		res.Context = vclock.Merge(res.Context, v.Clock())
 	}
-	return res, r.Err
+	return res, quorumErr(r.Err)
+}
+
+func quorumErr(msg string) error {
+	if msg == "" {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", ErrUnavailable, msg)
 }
 
 // Put writes value with write quorum W. ctx must be the Context from a
@@ -231,7 +274,7 @@ func (cl *Client) Put(key, value string, ctx vclock.VC) (Version, error) {
 		return Version{}, err
 	}
 	r := resp.(coordPutResp)
-	return r.Version, r.Err
+	return r.Version, quorumErr(r.Err)
 }
 
 // Resolver merges sibling values into one.

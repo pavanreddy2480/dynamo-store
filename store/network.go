@@ -12,6 +12,18 @@ import (
 // ErrTimeout is returned when a message (or its reply) is lost or late.
 var ErrTimeout = errors.New("network: request timed out")
 
+// Transport moves requests between endpoints. The in-memory Network and
+// the TCP transport both implement it, so nodes and clients run unchanged
+// in the simulation and as real processes.
+type Transport interface {
+	// Send delivers req from -> to and returns the reply, or an error if
+	// the request or reply was lost or ctx expired first.
+	Send(ctx context.Context, from, to string, req any) (any, error)
+	// Reachable is the failure detector's current opinion of to, as seen
+	// from from.
+	Reachable(from, to string) bool
+}
+
 // Handler processes one request delivered to an endpoint.
 type Handler func(from string, req any) any
 
@@ -51,6 +63,7 @@ type Network struct {
 	clientLt LatencyModel
 	isClient map[string]bool
 	extra    map[string]time.Duration // per-endpoint added delay (slow nodes)
+	down     map[string]bool          // crashed endpoints: everything to/from them is dropped
 
 	rngMu sync.Mutex
 	rng   *rand.Rand
@@ -65,6 +78,7 @@ func NewNetwork(lat, clientLat LatencyModel, seed int64) *Network {
 		handlers: map[string]Handler{},
 		group:    map[string]int{},
 		extra:    map[string]time.Duration{},
+		down:     map[string]bool{},
 		latency:  lat,
 		rng:      rand.New(rand.NewSource(seed)),
 	}
@@ -75,7 +89,9 @@ func (n *Network) Register(id string, h Handler) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.handlers[id] = h
-	n.group[id] = 0
+	if _, ok := n.group[id]; !ok {
+		n.group[id] = 0 // a restarted node keeps its partition group
+	}
 	n.isClient[id] = h == nil
 }
 
@@ -101,6 +117,13 @@ func (n *Network) SetSlow(id string, d time.Duration) {
 	n.extra[id] = d
 }
 
+// SetDown marks an endpoint as crashed (true) or running (false).
+func (n *Network) SetDown(id string, down bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.down[id] = down
+}
+
 // Heal removes all partitions.
 func (n *Network) Heal() { n.Partition() }
 
@@ -110,7 +133,7 @@ func (n *Network) Heal() { n.Partition() }
 func (n *Network) Reachable(from, to string) bool {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
-	return n.group[from] == n.group[to]
+	return n.group[from] == n.group[to] && !n.down[from] && !n.down[to]
 }
 
 func (n *Network) delay(l LatencyModel) time.Duration {
@@ -131,7 +154,10 @@ func (n *Network) Send(ctx context.Context, from, to string, req any) (any, erro
 		n.mu.RLock()
 		h := n.handlers[to]
 		n.mu.RUnlock()
-		return h(from, req), nil
+		if resp := h(from, req); resp != nil {
+			return resp, nil
+		}
+		return nil, ErrTimeout
 	}
 	out := make(chan any, 1)
 	go func() {
@@ -145,12 +171,15 @@ func (n *Network) Send(ctx context.Context, from, to string, req any) (any, erro
 		time.Sleep(n.delay(lat) + slow)
 		n.mu.RLock()
 		h := n.handlers[to]
-		ok := n.group[from] == n.group[to]
+		ok := n.group[from] == n.group[to] && !n.down[from] && !n.down[to]
 		n.mu.RUnlock()
 		if !ok || h == nil {
 			return // dropped
 		}
 		resp := h(from, req)
+		if resp == nil {
+			return // handler failed (e.g. WAL write error): no reply
+		}
 		time.Sleep(n.delay(lat) + slow)
 		if !n.Reachable(to, from) {
 			return // reply dropped
