@@ -1,0 +1,5 @@
+/bin/
+/data/
+*.wal
+*.wal.tmp
+results/raw/
