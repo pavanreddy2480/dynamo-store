@@ -165,7 +165,9 @@ func (w *WAL) rewrite(recs []walRecord) error {
 	if err != nil {
 		return err
 	}
-	w.bw = bufio.NewWriterSize(w.f, 1<<16)
+	// A large buffer so that, in async mode, the flush interval (not the
+	// buffer filling up) decides how much a crash can lose.
+	w.bw = bufio.NewWriterSize(w.f, 8<<20)
 	if w.mode == SyncAsync {
 		w.stop, w.done = make(chan struct{}), make(chan struct{})
 		go w.flushLoop()

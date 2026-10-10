@@ -21,7 +21,7 @@ type (
 		V    []Version
 		Hint string // intended owner when stored on a fallback node
 	}
-	putResp struct{}
+	putResp struct{ OK bool }
 
 	getReq  struct{ Key string }
 	getResp struct{ Versions []Version }
@@ -54,15 +54,15 @@ type (
 	syncResp struct{ Items map[string][]Version }
 
 	// Liveness probe used by the TCP failure detector.
-	pingReq  struct{}
-	pingResp struct{}
+	pingReq  struct{ Seq int }
+	pingResp struct{ Seq int }
 
 	// Admin: run anti-entropy with every reachable peer now.
-	syncAllReq  struct{}
+	syncAllReq  struct{ Rounds int }
 	syncAllResp struct{ Peers int }
 
 	// Admin: return this node's full state (owned data and hints).
-	dumpReq  struct{}
+	dumpReq  struct{ Keys bool }
 	dumpResp struct {
 		Data      map[string][]Version
 		HintCount int
@@ -252,7 +252,7 @@ func (nd *Node) Handle(from string, req any) any {
 		if err := nd.wal.append(rec); err != nil {
 			return nil
 		}
-		return putResp{}
+		return putResp{OK: true}
 	case pingReq:
 		return pingResp{}
 	case syncAllReq:
