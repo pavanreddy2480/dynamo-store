@@ -1,9 +1,6 @@
 # Dynamo-inspired store with configurable consistency: report
 
-The store runs in two ways, from the same node code:
-
-* **Simulation** (sections 2–5): all nodes are in one process with a simulated network. Numbers come from `go run ./cmd/bench -duration 2s` ([results/benchmark.md](results/benchmark.md)) and `go run ./cmd/demo` ([results/demo.txt](results/demo.txt)). Latencies are simulated delays plus Go scheduling, so treat them as relative.
-* **Real processes** (sections 6–7): each node is its own process in a Docker container talking TCP, partitions are iptables rules, crashes are `kill -9`, and every node has a write-ahead log on its own volume. Numbers come from `go run ./cmd/realbench -duration 4s` ([results/realnet.md](results/realnet.md)) on a 4-CPU Linux host shared by all containers.
+All numbers below come from `go run ./cmd/bench -duration 2s` ([results/benchmark.md](results/benchmark.md)) and `go run ./cmd/demo` ([results/demo.txt](results/demo.txt)). The simulation runs in one process, so latencies depend on Go's timers and the load on the machine. Treat them as relative, not absolute.
 
 ## 1. What was built
 
@@ -16,8 +13,6 @@ The store runs in two ways, from the same node code:
 | Explicit resolution policy | `siblings+client-reconcile` (default): the client merges siblings with a declared rule, here **set union** (`UnionResolver`). `last-writer-wins` is included for comparison: the replica keeps only the highest (timestamp, node). |
 | Partitions | An in-memory network delivers each message after a sampled delay. A partition silently drops messages between groups, so senders only learn about it through timeouts. |
 | Reconnect | Hinted handoff (for sloppy quorums), read repair, and a pairwise anti-entropy round (a full-state exchange standing in for Merkle trees). |
-| Real deployment | The same node code runs as separate processes (`cmd/dynode`) over TCP, one per Docker container, with a heartbeat failure detector. |
-| Crash recovery | A write-ahead log per node (fsync, async or none), replayed on restart. |
 
 The request path follows Dynamo. The client sends the request to a random reachable replica in the key's preference list, and that replica coordinates. It sends to all N replicas and answers once W acks (or R replies) arrive. The remaining replicas keep receiving the write in the background, and that lag is what produces stale reads. With `Sloppy` set, the coordinator replaces unreachable preferred replicas with the next live nodes on the ring. Those nodes store the write as a hint and hand it back when the owner is reachable again.
 
@@ -95,98 +90,18 @@ Nodes are split {n1,n2} (A, minority) | {n3,n4,n5} (B, majority), with 6 clients
 * "Stale" here mostly means a client didn't see writes from the other side of the partition, which is unavoidable in any mode where both sides accept writes.
 * **After reconnecting**, in every configuration, hinted handoff plus one anti-entropy round left all replicas of all 64 keys identical, and **no acknowledged write was missing**. Concurrent writes from the two sides survive as siblings (51–64 of the 64 keys), ready for the client's union merge.
 
-## 6. Real processes over a real network
-
-Each of the 5 nodes runs `dynode` in its own container (an image built `FROM scratch` holding two static Go binaries). Nodes talk gob over TCP with pooled connections and find out who is down with a heartbeat failure detector (probe every 100ms, suspect after 600ms) instead of the simulation's instant oracle. Load generators run in their own containers and record every operation; stale reads, availability and lost writes are computed afterwards from the merged histories.
-
-### Quorum sweep (R1, no failures, fsync WAL)
-
-| links | R,W | get p50 / p99 ms | put p50 / p99 ms | ops/s | stale reads |
-|---|---|---|---|---|---|
-| LAN | 1,1 | 0.92 / 13.6 | 2.58 / 17.9 | 3166 | 0.4% |
-| LAN | 2,2 | 1.37 / 12.5 | 3.30 / 16.6 | 2796 | 0% |
-| LAN | 3,3 | 1.81 / 8.2 | 3.99 / 12.9 | 2647 | 0% |
-| cross-zone (emulated) | 1,1 | 0.80 / 12.7 | 3.11 / 20.0 | 3059 | 0.8% |
-| cross-zone (emulated) | 2,2 | 3.60 / 7.2 | 4.51 / 8.7 | 1951 | 0% |
-| cross-zone (emulated) | 3,3 | 4.72 / 9.4 | 5.63 / 10.5 | 1513 | 0% |
-
-* As in the simulation, every R+W>3 setting had **zero** stale reads, and higher quorums cost latency and throughput (with cross-zone links, R=W=3 is half the throughput of R=W=1).
-* **Stale reads at R=W=1 were far rarer on real processes (0.4–0.8%) than in the simulation (22%).** Two things differ. First, on a real bridge network a replica receives the write within a fraction of a millisecond, which is shorter than the time it takes the next read to arrive (each operation here takes 1–3ms end to end, including gob encoding, syscalls and fsync). Second, the workloads differ: the simulation had 16 readers polling keys that a dedicated writer had just updated, while here each client reads a random key, which is rarely one it just wrote. The simulation's number is a worst case for a hot key under slow replication; this one is closer to a typical LAN workload. Both agree on the rule that matters: R+W≤N allows stale reads, R+W>N does not.
-* The "cross-zone" rows add an emulated delay inside the transport because the host has no `tc netem`. Real cross-zone links would also have more variance.
-
-### Partition with real network rules (R2)
-
-Every packet between {n1, n2, load generator A} and {n3, n4, n5, load generator B} is dropped by iptables on the Docker bridge. The nodes only learn about the partition through timeouts and missed heartbeats.
-
-| quorum | R,W | A get / put available | B get / put available | stale A / B | acked writes lost after heal | replicas converged |
-|---|---|---|---|---|---|---|
-| strict | 1,1 | 89% / 90% | 100% / 100% | 99% / 86% | 0 of 5968 | yes |
-| strict | 2,2 | 27% / 27% | 72% / 70% | **0% / 0%** | 0 of 932 | yes |
-| strict | 3,3 | 0% / 0% | 11% / 10% | 0% | 0 of 42 | yes |
-| sloppy | 1,1 | 100% / 99% | 100% / 100% | 97% / 97% | 0 of 4763 | yes |
-| sloppy | 2,2 | 99% / 98% | 100% / 99% | 97% / 97% | 0 of 4014 | yes |
-
-These match the simulation closely (strict R=W=2: 28% / 72% simulated, 27% / 72% real). Sloppy availability is just under 100% because, unlike the simulation's oracle, the real failure detector needs up to 600ms to notice the partition, and requests routed to the far side before then time out. After the rules were removed, hinted handoff and anti-entropy brought every replica of every key to the same state, and no acknowledged write was missing.
-
-## 7. Crashes and durability
-
-Every node now writes each change to a **write-ahead log** before acknowledging it. Records are CRC-checked so a half-written record at the end of the file is ignored on restart. There are three modes:
-
-* **fsync**: the record is on disk before the ack. Concurrent writers share one fsync (group commit).
-* **async**: records are buffered in the process and flushed every 10ms or every 1s. The ack does not wait.
-* **none**: memory only.
-
-### One node killed with `kill -9` (R3)
-
-n3 is killed mid-run, restarted from its volume while still cut off by iptables (so its recovered state can be inspected before anything repairs it), then reconnected.
-
-| WAL mode | W | writes n3 acknowledged before the kill | missing from n3 after restart | acked writes lost for good | put p50 ms |
-|---|---|---|---|---|---|
-| fsync | 1 | 246 | **0** | 0 of 4114 | 2.66 |
-| fsync | 2 | 202 | **0** | 0 of 4086 | 3.66 |
-| async 10ms | 1 | 385 | 1 (0.3%) | 0 of 6983 | 1.01 |
-| async 1s | 1 | 460 | 426 (93%) | 0 of 7129 | 0.96 |
-| none | 1 | 511 | 511 (100%) | 0 of 8045 | 0.81 |
-| none | 2 | 434 | 434 (100%) | 0 of 7236 | 1.31 |
-
-Only fsync kept everything on the crashed node. Yet **no acknowledged write was lost cluster-wide in any mode**: the other replicas still had the data, and anti-entropy and read repair refilled n3 after it rejoined. With one node down, replication is what provides durability. A restart (replay plus checkpoint) took about 0.6s.
-
-### All five nodes killed at once (R3b)
-
-| WAL mode | acknowledged writes | lost after restart |
-|---|---|---|
-| fsync | 1651 | **0** |
-| async 10ms | 3069 | 2 (0.1%) |
-| async 1s | 2321 | 491 (21%) |
-| none | 2523 | **2523 (100%)** |
-
-When every replica crashes together (a power cut, a bad deploy), replication can't help and only the log can. fsync lost nothing. Memory-only lost everything. Async lost roughly the last flush interval. SIGKILL ends the process but not the machine, so writes already handed to the OS survived. A real power cut would also lose the OS cache, which only fsync covers.
-
-### What durability costs (R4, R=W=2, no failures)
-
-| WAL mode | put p50 / p99 ms | ops/s |
-|---|---|---|
-| none | 1.10 / 8.5 | 5048 |
-| async 10ms | 1.14 / 6.1 | 5727 |
-| fsync | 3.09 / 14.0 | 3062 |
-
-fsync makes writes about 3× slower at the median and costs about 40% of throughput on this host. Group commit keeps that cost from growing with the number of concurrent writers. Async at 10ms costs almost nothing and, in these tests, lost almost nothing.
-
-## 8. Takeaways
+## 6. Takeaways
 
 1. R+W>N with strict quorums gave 0 stale reads in every run, at the cost of tail latency and of minority-side availability during partitions.
-2. R=W=1 is the fastest and most available setting, but it allows stale reads. How many depends on the workload and on replication lag: 25% for a hot key in the simulation, 0.4–0.8% on real containers.
+2. R=W=1 is the fastest and most available setting, but 22% of reads were stale even with no failures.
 3. Sloppy quorums make the store always writable, but they also drop the R+W>N guarantee. Conflicts are then normal and the resolution rule does the work.
 4. Version vectors only help if dominance is computed correctly. Plain per-node clocks silently lose concurrent writes, and dotted version vectors fixed that in these tests.
 5. An explicit, data-preserving merge (union) kept every acknowledged write. LWW is simpler but lost acknowledged writes in every concurrent test.
-6. The simulation's partition results held up on real processes with real firewall rules: the same availability split, zero stale reads for strict R+W>N, and full convergence with no lost writes after healing.
-7. Replication protects against one node crashing, even with no log at all. The write-ahead log with fsync protects against everything crashing at once, at about 3× the write latency.
 
 ## Limitations
 
-* The real-process runs share one 4-CPU host, so containers compete for CPU and the "network" is a local bridge. Cross-zone latency is emulated in the transport, not by the kernel.
-* SIGKILL tests process crashes. Power loss (losing the OS page cache) was not tested; fsync is the only mode that would survive it.
-* The simulation's failure detector is an oracle. The real one is heartbeat-based with a fixed 600ms suspicion timeout, not gossip or phi-accrual, and membership is static.
-* The WAL is rewritten as a compact checkpoint only at startup, so it grows without bound while a node runs.
+* This is a single-process simulation. "Latency" is simulated network delay plus Go scheduling. There is no disk and no node crash or restart; partitions are the only failure tested.
+* The failure detector is an oracle: it sees partitions instantly and exactly. A real gossip detector would add false suspicions and delay.
 * Anti-entropy exchanges full state instead of Merkle trees, which is fine at this scale.
 * Union as a merge can't express deletes. That needs tombstones or a CRDT such as an OR-set, as in Dynamo's shopping-cart caveat.
+* Real processes over a real network, and crash recovery with a write-ahead log, are on the [`real-network-and-wal`](https://github.com/pavanreddy2480/dynamo-store/tree/real-network-and-wal) branch, with their own results.
