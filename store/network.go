@@ -45,14 +45,14 @@ var DefaultClientLatency = LatencyModel{
 // the failure through a timeout, as on a real network.
 type Network struct {
 	mu       sync.RWMutex
-	handlers map[string]Handler
-	group    map[string]int
-	latency  LatencyModel
-	clientLt LatencyModel
-	isClient map[string]bool
+	handlers map[string]Handler       // endpoint id -> request handler (nil for clients)
+	group    map[string]int           // endpoint id -> partition group; same group = connected
+	latency  LatencyModel             // replica-to-replica delay
+	clientLt LatencyModel             // delay for hops touching a client
+	isClient map[string]bool          // endpoints that only send requests
 	extra    map[string]time.Duration // per-endpoint added delay (slow nodes)
 
-	rngMu sync.Mutex
+	rngMu sync.Mutex // rand.Rand is not safe for concurrent use
 	rng   *rand.Rand
 }
 
@@ -113,6 +113,7 @@ func (n *Network) Reachable(from, to string) bool {
 	return n.group[from] == n.group[to]
 }
 
+// delay samples one one-way message delay from l.
 func (n *Network) delay(l LatencyModel) time.Duration {
 	n.rngMu.Lock()
 	defer n.rngMu.Unlock()

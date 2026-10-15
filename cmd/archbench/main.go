@@ -25,14 +25,17 @@ var (
 	outDir = flag.String("out", "results", "output directory")
 )
 
+// md accumulates the Markdown report written to results/architecture.md.
 var md strings.Builder
 
+// w prints a formatted line and appends it to the report.
 func w(format string, a ...any) {
 	s := fmt.Sprintf(format, a...)
 	fmt.Print(s)
 	md.WriteString(s)
 }
 
+// nodes returns the ids n1..nn.
 func nodes(n int) []string {
 	ids := make([]string, n)
 	for i := range ids {
@@ -41,6 +44,7 @@ func nodes(n int) []string {
 	return ids
 }
 
+// fnv64 is the alternative ring hash compared against MD5 in A1.
 func fnv64(s string) uint64 {
 	h := fnv.New64a()
 	h.Write([]byte(s))
@@ -93,6 +97,7 @@ func ringBalance() {
 
 // ------------------------------------------------------------ A2 replication
 
+// rmwResult counts acknowledged items and those missing after the final merge.
 type rmwResult struct {
 	acked, lost, siblings int
 }
@@ -144,6 +149,8 @@ func rmw(cfg store.Config, r, wq int) rmwResult {
 	return out
 }
 
+// replication (A2) compares replicating the whole sibling set with sending
+// only the new version, and dotted version vectors with per-node clocks.
 func replication() {
 	w("\n## A2. What a coordinator replicates, and how versions are compared\n\n")
 	w("8 clients do concurrent read-modify-write on one key for %v, adding a unique item each time. \"Lost\" counts acknowledged items missing after a final union merge. Each row is the sum over 3 runs.\n\n", *dur)
@@ -174,6 +181,7 @@ func replication() {
 
 // ------------------------------------------------------------ A3 repair
 
+// repairMode selects which repair mechanisms run after the partition heals.
 type repairMode struct {
 	name                 string
 	handoff, rr, entropy bool
@@ -274,6 +282,8 @@ func convergence(m repairMode) (acked, under int, divergent int) {
 	return
 }
 
+// repair (A3) measures how far each repair mechanism, alone or combined,
+// brings replicas back after a partition.
 func repair() {
 	w("\n## A3. Repair mechanisms after a partition heals\n\n")
 	w("Sloppy R=1 W=2 writes on both sides of a {n1,n2} | {n3,n4,n5} partition for %v, then heal. \"Under-replicated\" means an acknowledged write not yet on all 3 preferred replicas. \"Divergent\" means the 3 replicas of a key disagree.\n\n", *dur/2)
@@ -292,6 +302,8 @@ func repair() {
 
 // ------------------------------------------------------------ A4 coordinator
 
+// coordinatorChoice (A4) compares always using the first reachable
+// preferred replica with picking one at random: stale reads and load spread.
 func coordinatorChoice() {
 	w("\n## A4. Choosing the coordinator\n\n")
 	w("Same workload as E1 (32 keys, one writer each, 16 readers), R=1 W=1, for %v. Load share is each node's fraction of coordinated requests; perfect balance is 20%%.\n\n", *dur)
@@ -371,6 +383,8 @@ func coordinatorChoice() {
 
 // ------------------------------------------------------------ A5 timeout
 
+// timeouts (A5) sweeps the replica timeout: a short one fails healthy
+// requests on slow messages, a long one makes every failed request slow.
 func timeouts() {
 	w("\n## A5. Replica timeout\n\n")
 	w("How long a coordinator waits for replicas. Strict R=W=2, 64 keys, partition {n1,n2} | {n3,n4,n5}, 6 clients per side, %v. A failed operation costs the full timeout.\n\n", *dur/2)
@@ -382,8 +396,11 @@ func timeouts() {
 	}
 }
 
+// loadStats summarises one loadWith run.
 type loadStats struct{ p99ok, p50fail, failRate float64 }
 
+// loadWith runs 12 R=W=2 writers (6 per side when partitioned) with the
+// given replica timeout and reports latency and failure rate.
 func loadWith(timeout time.Duration, partition bool) loadStats {
 	cfg := store.DefaultConfig()
 	cfg.Node.ReplicaTimeout = timeout
@@ -432,6 +449,7 @@ func loadWith(timeout time.Duration, partition bool) loadStats {
 	}
 }
 
+// pctMs returns the p-th percentile of ds in milliseconds (NaN if empty).
 func pctMs(ds []time.Duration, p float64) float64 {
 	if len(ds) == 0 {
 		return math.NaN()

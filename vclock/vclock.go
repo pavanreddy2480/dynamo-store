@@ -1,5 +1,10 @@
 // Package vclock implements version vectors (vector clocks) used to order
 // versions of a key and to detect concurrent updates.
+//
+// A clock maps each node id to a counter. Clock a descends from b when every
+// entry of a is at least the matching entry of b; if neither descends from
+// the other, the two histories are concurrent and neither may replace the
+// other.
 package vclock
 
 import (
@@ -11,6 +16,7 @@ import (
 // Order is the causal relationship between two clocks.
 type Order int
 
+// Possible results of Compare.
 const (
 	Equal      Order = iota // identical histories
 	Before                  // a happened-before b (b descends from a)
@@ -18,6 +24,7 @@ const (
 	Concurrent              // neither descends from the other
 )
 
+// String returns the order's name.
 func (o Order) String() string {
 	return [...]string{"Equal", "Before", "After", "Concurrent"}[o]
 }
@@ -75,6 +82,7 @@ func Compare(a, b VC) Order {
 			bLess = true
 		}
 	}
+	// Entries present only in b are zero in a.
 	for k, bn := range b {
 		if _, ok := a[k]; !ok && bn > 0 {
 			aLess = true

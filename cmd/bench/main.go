@@ -24,10 +24,12 @@ var (
 	outDir = flag.String("out", "results", "directory for Markdown results")
 )
 
+// rw is one quorum setting.
 type rw struct{ R, W int }
 
 func (q rw) String() string { return fmt.Sprintf("R=%d W=%d", q.R, q.W) }
 
+// sweep lists the quorum settings measured in E1.
 var sweep = []rw{{1, 1}, {1, 2}, {2, 1}, {1, 3}, {3, 1}, {2, 2}, {2, 3}, {3, 2}, {3, 3}}
 
 // oracle remembers, per key, the latest acknowledged writes (those not yet
@@ -39,6 +41,7 @@ type oracle struct {
 
 func newOracle() *oracle { return &oracle{acked: map[string][]store.Version{}} }
 
+// ack records an acknowledged write and forgets the writes it supersedes.
 func (o *oracle) ack(key string, v store.Version) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -51,6 +54,7 @@ func (o *oracle) ack(key string, v store.Version) {
 	o.acked[key] = append(kept, v)
 }
 
+// snapshot returns the acknowledged writes a read starting now must see.
 func (o *oracle) snapshot(key string) []store.Version {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -76,6 +80,8 @@ func stale(before []store.Version, got []store.Version) bool {
 	return false
 }
 
+// stats accumulates per-operation results for one configuration. It is
+// shared by all client goroutines, hence the mutex.
 type stats struct {
 	mu                sync.Mutex
 	getLat, putLat    []time.Duration
@@ -86,6 +92,7 @@ type stats struct {
 	maxSiblings       int
 }
 
+// get records one read: latency, success, staleness and siblings returned.
 func (s *stats) get(d time.Duration, ok bool, isStale bool, siblings int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -106,6 +113,7 @@ func (s *stats) get(d time.Duration, ok bool, isStale bool, siblings int) {
 	}
 }
 
+// put records one write.
 func (s *stats) put(d time.Duration, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -116,6 +124,7 @@ func (s *stats) put(d time.Duration, ok bool) {
 	}
 }
 
+// pct returns the p-th percentile of ds in milliseconds, or "-" if empty.
 func pct(ds []time.Duration, p float64) string {
 	if len(ds) == 0 {
 		return "-"
@@ -126,6 +135,7 @@ func pct(ds []time.Duration, p float64) string {
 	return fmt.Sprintf("%.2f", float64(d)/float64(time.Millisecond))
 }
 
+// ratio formats a/b as a percentage, or "-" if b is zero.
 func ratio(a, b int) string {
 	if b == 0 {
 		return "-"
@@ -191,6 +201,7 @@ func quorumSweep(q rw, readRepair bool, slowNode time.Duration) *stats {
 
 // ---------------------------------------------------------------- E2
 
+// concResult summarises one concurrent-update run (E2).
 type concResult struct {
 	st         *stats
 	ackedItems int
@@ -260,6 +271,7 @@ func concurrentUpdates(q rw, policy store.Policy, clocks store.ClockMode) concRe
 
 // ---------------------------------------------------------------- E3
 
+// sideStats holds per-side results of a partition run (E3).
 type sideStats struct {
 	a, b             *stats
 	keysWithSibs     int  // after healing and reconciliation-free read

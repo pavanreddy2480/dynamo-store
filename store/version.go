@@ -53,6 +53,7 @@ const (
 	LastWriterWins
 )
 
+// String returns the policy's name as used in benchmark tables.
 func (p Policy) String() string {
 	if p == LastWriterWins {
 		return "last-writer-wins"
@@ -74,6 +75,7 @@ const (
 	PerNodeVC
 )
 
+// String returns the clock mode's name as used in benchmark tables.
 func (m ClockMode) String() string {
 	if m == PerNodeVC {
 		return "per-node vector clock"
@@ -81,6 +83,9 @@ func (m ClockMode) String() string {
 	return "dotted version vector"
 }
 
+// rules bundles the two settings that decide how versions compare. Every
+// merge and comparison goes through it, so replicas, coordinators and repair
+// all apply the same ordering.
 type rules struct {
 	policy Policy
 	clocks ClockMode
@@ -105,7 +110,10 @@ func (r rules) same(a, b Version) bool {
 	return a.Dot == b.Dot
 }
 
-// lwwBeats reports whether a wins over b under last-writer-wins.
+// lwwBeats reports whether a wins over b under last-writer-wins. Causal
+// order is respected first; only concurrent versions fall back to the
+// timestamp, and equal timestamps to the coordinating node's id, so every
+// replica picks the same winner.
 func (r rules) lwwBeats(a, b Version) bool {
 	switch {
 	case r.same(a, b) || r.obsoletes(b, a):
@@ -119,7 +127,10 @@ func (r rules) lwwBeats(a, b Version) bool {
 }
 
 // merge folds incoming into set and returns the new set. Versions
-// superseded by another version are dropped.
+// superseded by another version are dropped. Under KeepSiblings the result
+// holds only mutually concurrent versions; under LastWriterWins it holds at
+// most one. Merge is commutative and idempotent, so replicas that receive
+// the same versions in any order, or more than once, end up identical.
 func (r rules) merge(set []Version, incoming ...Version) []Version {
 	for _, v := range incoming {
 		if r.policy == LastWriterWins {
@@ -160,10 +171,14 @@ func (r rules) covers(set []Version, v Version) bool {
 	return false
 }
 
+// sortVersions orders a sibling set deterministically, so replicas holding
+// the same versions also return them in the same order.
 func sortVersions(vs []Version) {
 	sort.Slice(vs, func(i, j int) bool { return vs[i].Clock().String() < vs[j].Clock().String() })
 }
 
+// cloneVersions deep-copies versions (including their context maps) so the
+// copy can leave the lock that guards the original.
 func cloneVersions(vs []Version) []Version {
 	out := make([]Version, len(vs))
 	for i, v := range vs {

@@ -8,11 +8,15 @@ import (
 )
 
 // Ring is a consistent-hash ring with virtual nodes.
+//
+// Each physical node owns several tokens (positions) on a 64-bit ring.
+// Many small, scattered ranges per node spread keys and replica load far
+// more evenly than one token per node would.
 type Ring struct {
-	tokens []uint64
-	owner  map[uint64]string
-	nodes  []string
-	hash   func(string) uint64
+	tokens []uint64            // all tokens, sorted
+	owner  map[uint64]string   // token -> physical node
+	nodes  []string            // physical nodes
+	hash   func(string) uint64 // maps keys and tokens onto the ring
 }
 
 // NewRing places vnodes tokens per physical node, hashing with MD5.
@@ -32,6 +36,7 @@ func NewRingWithHash(nodes []string, vnodes int, hash64 func(string) uint64) *Ri
 	return r
 }
 
+// hash64 maps s onto the ring using the first 8 bytes of its MD5 digest.
 func hash64(s string) uint64 {
 	sum := md5.Sum([]byte(s)) // Dynamo hashes keys with MD5
 	return binary.BigEndian.Uint64(sum[:8])

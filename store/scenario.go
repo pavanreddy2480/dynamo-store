@@ -56,6 +56,7 @@ type ScenarioResult struct {
 	Log          []string
 }
 
+// logf appends one line to the scenario's narrative log.
 func (r *ScenarioResult) logf(format string, a ...any) {
 	r.Log = append(r.Log, fmt.Sprintf(format, a...))
 }
@@ -63,6 +64,11 @@ func (r *ScenarioResult) logf(format string, a ...any) {
 // RunPartitionScenario partitions the cluster so the key's replicas are
 // split 1 | 2, updates the same key on both sides, heals the partition and
 // checks the declared resolution rule.
+//
+// The steps are: write {milk} to all three replicas; have both clients read
+// it; partition; write {eggs,milk} on side A and {bread,milk} on side B;
+// heal and run hinted handoff plus anti-entropy; read with R=N; apply the
+// rule; and finally check every replica holds one identical version.
 func RunPartitionScenario(o ScenarioOptions) ScenarioResult {
 	cfg := DefaultConfig()
 	cfg.Node.Policy = o.Policy
@@ -214,6 +220,7 @@ func RunPartitionScenario(o ScenarioOptions) ScenarioResult {
 	return res
 }
 
+// errStr renders a put outcome for the log.
 func errStr(err error) string {
 	if err == nil {
 		return "ok"
@@ -221,6 +228,7 @@ func errStr(err error) string {
 	return "FAILED (" + err.Error() + ")"
 }
 
+// describe renders a sibling set as {value}[clock] pairs.
 func describe(vs []Version) string {
 	parts := make([]string, len(vs))
 	for i, v := range vs {
@@ -229,6 +237,7 @@ func describe(vs []Version) string {
 	return strings.Join(parts, " ")
 }
 
+// isSubset reports whether every item of comma-separated set a is in b.
 func isSubset(a, b string) bool {
 	have := map[string]bool{}
 	for _, it := range strings.Split(b, ",") {

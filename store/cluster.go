@@ -11,12 +11,12 @@ import (
 
 // Config describes a whole simulated cluster.
 type Config struct {
-	Nodes   int
-	VNodes  int
-	Node    NodeConfig
-	Latency LatencyModel
-	Client  LatencyModel
-	Seed    int64
+	Nodes   int          // number of physical nodes, named n1..nNodes
+	VNodes  int          // virtual nodes (ring tokens) per physical node
+	Node    NodeConfig   // settings shared by every replica
+	Latency LatencyModel // replica-to-replica message delay
+	Client  LatencyModel // delay of hops that start or end at a client
+	Seed    int64        // seeds the network's latency sampling
 }
 
 // DefaultConfig is 5 nodes with 3 replicas per key.
@@ -41,8 +41,8 @@ func DefaultConfig() Config {
 type Cluster struct {
 	Net   *Network
 	Ring  *Ring
-	Nodes map[string]*Node
-	IDs   []string
+	Nodes map[string]*Node // by node id
+	IDs   []string         // node ids in a fixed order
 	cfg   Config
 }
 
@@ -133,16 +133,16 @@ func (c *Cluster) NewClient(id string, r, w int) *Client {
 // travel with every request; Sloppy enables sloppy quorums + hinted handoff.
 type Client struct {
 	ID      string
-	R, W    int
-	Sloppy  bool
-	Timeout time.Duration
+	R, W    int           // read and write quorums, each in [1, N]
+	Sloppy  bool          // use fallback nodes when preferred replicas are unreachable
+	Timeout time.Duration // how long to wait for the coordinator's answer
 	// FirstCoordinator always routes to the first reachable preferred
 	// replica instead of a random one (compared in cmd/archbench).
 	FirstCoordinator bool
 
 	net  *Network
 	ring *Ring
-	n    int
+	n    int // replicas per key
 }
 
 // GetResult holds every concurrent version found plus the context (merged

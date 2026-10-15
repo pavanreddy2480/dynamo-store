@@ -14,8 +14,13 @@ import (
 // ErrUnavailable means fewer than R (or W) replicas answered in time.
 var ErrUnavailable = errors.New("quorum not reached")
 
-// Messages exchanged between clients and replicas.
+// Messages exchanged between clients and replicas. Every request is
+// answered by exactly one response type; a missing response means the
+// message or its reply was dropped.
 type (
+	// putReq asks a replica to merge V into what it stores for Key. With
+	// Hint set, the receiver is a fallback node holding the versions on
+	// behalf of Hint until hinted handoff can deliver them.
 	putReq struct {
 		Key  string
 		V    []Version
@@ -23,9 +28,13 @@ type (
 	}
 	putResp struct{}
 
+	// getReq asks a replica for its current versions of Key.
 	getReq  struct{ Key string }
 	getResp struct{ Versions []Version }
 
+	// coordPutReq is a client write sent to a coordinator. Context is the
+	// clock from the client's last Get; the new version supersedes exactly
+	// the versions that context covers.
 	coordPutReq struct {
 		Key     string
 		Value   string
@@ -39,6 +48,7 @@ type (
 		Err     error
 	}
 
+	// coordGetReq is a client read sent to a coordinator.
 	coordGetReq struct {
 		Key    string
 		R      int
@@ -50,6 +60,9 @@ type (
 		Err      error
 	}
 
+	// syncReq carries one side of an anti-entropy exchange: every key the
+	// sender owns that the receiver should also hold. The reply carries the
+	// receiver's half.
 	syncReq  struct{ Items map[string][]Version }
 	syncResp struct{ Items map[string][]Version }
 )
@@ -70,14 +83,18 @@ type NodeConfig struct {
 }
 
 // Node is one storage replica. Any node can coordinate a request.
+//
+// A node keeps two kinds of state: data, the keys it is a preferred replica
+// for, and hints, writes it accepted as a sloppy-quorum fallback for another
+// node. Both are sibling sets kept in canonical form by rules.merge.
 type Node struct {
 	ID   string
 	cfg  NodeConfig
 	net  *Network
 	ring *Ring
 
-	mu     sync.Mutex
-	data   map[string][]Version
+	mu     sync.Mutex                      // guards data, hints, issued and cfg.ClockSkew
+	data   map[string][]Version            // key -> sibling set for keys this node owns
 	hints  map[string]map[string][]Version // intended owner -> key -> versions
 	issued map[string]uint64               // highest counter this node issued per key
 
@@ -90,6 +107,8 @@ type Node struct {
 // Coordinated returns how many client requests this node coordinated.
 func (nd *Node) Coordinated() int64 { return nd.coordinated.Load() }
 
+// newNode creates a replica and registers it on net. Call start to begin
+// background hinted handoff.
 func newNode(id string, cfg NodeConfig, net *Network, ring *Ring) *Node {
 	nd := &Node{
 		ID: id, cfg: cfg, net: net, ring: ring,
@@ -102,6 +121,8 @@ func newNode(id string, cfg NodeConfig, net *Network, ring *Ring) *Node {
 	return nd
 }
 
+// start launches the background loop that retries hinted handoff every
+// HandoffInterval. A zero interval disables it.
 func (nd *Node) start() {
 	if nd.cfg.HandoffInterval <= 0 {
 		return
@@ -122,10 +143,16 @@ func (nd *Node) start() {
 	}()
 }
 
+// rules returns the version-ordering rules this node is configured with.
 func (nd *Node) rules() rules { return rules{policy: nd.cfg.Policy, clocks: nd.cfg.Clocks} }
 
+// close stops the background loop and waits for it to exit.
 func (nd *Node) close() { close(nd.stop); nd.wg.Wait() }
 
+// handle is the node's network entry point. It dispatches one request by
+// type and returns the reply. Replica-level requests (putReq, getReq,
+// syncReq) only touch local state; coordinator requests fan out to other
+// replicas.
 func (nd *Node) handle(from string, req any) any {
 	switch r := req.(type) {
 	case putReq:
@@ -169,6 +196,8 @@ func (nd *Node) localRead(key string) []Version {
 	return vs
 }
 
+// target is one destination of a coordinated request: the node to contact
+// and, for a sloppy-quorum fallback, the preferred node it stands in for.
 type target struct{ node, hint string }
 
 // targets returns where a request for key goes. Strict quorums always use
@@ -206,6 +235,10 @@ func (nd *Node) targets(key string, sloppy bool) []target {
 	return out
 }
 
+// coordPut coordinates a client write: it creates the new version, stores
+// it locally, replicates to the other targets and returns once W of them
+// (counting itself) have acknowledged, or once every target has answered or
+// timed out.
 func (nd *Node) coordPut(r coordPutReq) coordPutResp {
 	ts := nd.targets(r.Key, r.Sloppy)
 	selfIdx := -1
@@ -220,6 +253,12 @@ func (nd *Node) coordPut(r coordPutReq) coordPutResp {
 	// does) rather than just the new version guarantees that any replica
 	// holding dot n:k also holds n:k-1 or something that supersedes it, so
 	// a context built from a single replica never claims a write it lacks.
+	//
+	// The new dot's counter must be higher than any counter this node has
+	// used for the key before, including ones it learned about only through
+	// the client's context or through versions replicated back to it.
+	// Reusing a counter would make two different writes share a dot, and one
+	// would silently replace the other.
 	nd.mu.Lock()
 	floor := nd.issued[r.Key]
 	if c := r.Context[nd.ID]; c > floor {
@@ -274,6 +313,8 @@ func (nd *Node) coordPut(r coordPutReq) coordPutResp {
 			acks <- err == nil
 		}(t)
 	}
+	// Count acks until W succeed or every target has answered. Failures
+	// (timeouts, partitions) count towards done but not ok.
 	ok, done := 0, 0
 	for done < len(ts) && ok < r.W {
 		if <-acks {
@@ -291,6 +332,9 @@ func (nd *Node) coordPut(r coordPutReq) coordPutResp {
 	return resp
 }
 
+// coordGet coordinates a client read: it asks every target, merges the
+// first R successful replies into one sibling set and returns it. Replies
+// that arrive later are still collected so read repair can use them.
 func (nd *Node) coordGet(r coordGetReq) coordGetResp {
 	ts := nd.targets(r.Key, r.Sloppy)
 	ctx, cancel := context.WithTimeout(context.Background(), nd.cfg.ReplicaTimeout)
@@ -359,6 +403,9 @@ func (nd *Node) coordGet(r coordGetReq) coordGetResp {
 }
 
 // handoffHints delivers versions held for other nodes once they are back.
+// A hint is removed only after its owner acknowledged it, and only the
+// versions that were actually sent: a newer hint for the same key that
+// arrived meanwhile stays for the next round.
 func (nd *Node) handoffHints() {
 	nd.mu.Lock()
 	pending := map[string]map[string][]Version{}
@@ -423,6 +470,7 @@ func (nd *Node) itemsFor(peer string) map[string][]Version {
 	return out
 }
 
+// absorb merges versions received during anti-entropy into owned data.
 func (nd *Node) absorb(items map[string][]Version) {
 	nd.mu.Lock()
 	defer nd.mu.Unlock()
@@ -431,6 +479,8 @@ func (nd *Node) absorb(items map[string][]Version) {
 	}
 }
 
+// handleSync answers an anti-entropy request: take the peer's items, then
+// send back everything this node owns that the peer should also hold.
 func (nd *Node) handleSync(from string, r syncReq) syncResp {
 	nd.absorb(r.Items)
 	return syncResp{Items: nd.itemsFor(from)}
