@@ -70,12 +70,12 @@ Each node is both a **replica**, which stores sibling sets, and a **coordinator*
 | Package / file | Responsibility | Depends on |
 |---|---|---|
 | `vclock/` | Vector clocks: `Compare`, `Merge`, `Increment`, `Descends` | none |
-| `store/version.go` | `Version`, `Dot`, dominance rules, sibling merge, LWW, clock modes | `vclock` |
+| `store/version.go`, `store/merge.go` | `Version`, `Dot`, dominance rules, sibling merge, LWW, clock modes | `vclock` |
 | `store/network.go` | Message delivery, latency model, partitions, slow nodes, failure-detector view | none |
 | `store/ring.go` | Consistent hashing, preference lists, fallback order | none |
-| `store/node.go` | Replica storage, coordinator logic, hinted handoff, read repair, anti-entropy | all of the above |
-| `store/cluster.go` | Cluster wiring, `Client` API, coordinator selection | node, ring, network |
-| `store/scenario.go` | The partition, update, heal and verify scenario, and the `UnionResolver` rule | cluster |
+| `store/messages.go`, `store/node.go`, `store/coordinator.go`, `store/repair.go` | Messages, replica storage, coordinator logic and read repair, hinted handoff and anti-entropy | all of the above |
+| `store/cluster.go`, `store/client.go` | Cluster wiring, `Client` API, coordinator selection | node, ring, network |
+| `store/scenario.go`, `store/resolver.go` | The partition, update, heal and verify scenario, and the `UnionResolver` rule | cluster |
 | `cmd/demo` | Prints the partition scenario under 5 configurations | store |
 | `cmd/bench` | E1–E3: quorum sweep, concurrent updates, partition availability | store |
 | `cmd/archbench` | A1–A5: experiments behind the architecture decisions | store |
@@ -96,7 +96,7 @@ Each node is both a **replica**, which stores sibling sets, and a **coordinator*
 * Each node places 64 tokens (`MD5("n3#17")`, ...) on a 64-bit ring.
 * `Walk(key)` starts at `MD5(key)`, moves clockwise, and returns every physical node once. The first N=3 are the **preference list**; the rest are **fallbacks** in the order sloppy quorums use them.
 
-### 3.3 Node (`store/node.go`)
+### 3.3 Node (`store/node.go`, `coordinator.go`, `repair.go`)
 
 State, protected by one mutex per node:
 
@@ -118,7 +118,7 @@ Message handlers:
 
 Background loop: every `HandoffInterval` (5ms), the node tries to deliver held hints to owners that have become reachable again.
 
-### 3.4 Client (`store/cluster.go`)
+### 3.4 Client (`store/client.go`)
 
 ```go
 cl := cluster.NewClient("alice", R, W) // quorums are a client setting

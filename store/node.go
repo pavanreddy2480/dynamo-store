@@ -1,73 +1,22 @@
+// This file defines a storage replica (Node) and its configuration: node
+// construction and shutdown, the background hinted-handoff loop, the
+// network entry point that dispatches every incoming request, and the
+// read-only accessors used by tests and benchmarks. Coordinator logic lives
+// in coordinator.go and the repair mechanisms in repair.go.
+
 package store
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"dynamostore/vclock"
-)
-
-// ErrUnavailable means fewer than R (or W) replicas answered in time.
-var ErrUnavailable = errors.New("quorum not reached")
-
-// Messages exchanged between clients and replicas. Every request is
-// answered by exactly one response type; a missing response means the
-// message or its reply was dropped.
-type (
-	// putReq asks a replica to merge V into what it stores for Key. With
-	// Hint set, the receiver is a fallback node holding the versions on
-	// behalf of Hint until hinted handoff can deliver them.
-	putReq struct {
-		Key  string
-		V    []Version
-		Hint string // intended owner when stored on a fallback node
-	}
-	putResp struct{}
-
-	// getReq asks a replica for its current versions of Key.
-	getReq  struct{ Key string }
-	getResp struct{ Versions []Version }
-
-	// coordPutReq is a client write sent to a coordinator. Context is the
-	// clock from the client's last Get; the new version supersedes exactly
-	// the versions that context covers.
-	coordPutReq struct {
-		Key     string
-		Value   string
-		Context vclock.VC
-		W       int
-		Sloppy  bool
-	}
-	coordPutResp struct {
-		Version Version
-		Acks    int
-		Err     error
-	}
-
-	// coordGetReq is a client read sent to a coordinator.
-	coordGetReq struct {
-		Key    string
-		R      int
-		Sloppy bool
-	}
-	coordGetResp struct {
-		Versions []Version
-		Replies  int
-		Err      error
-	}
-
-	// syncReq carries one side of an anti-entropy exchange: every key the
-	// sender owns that the receiver should also hold. The reply carries the
-	// receiver's half.
-	syncReq  struct{ Items map[string][]Version }
-	syncResp struct{ Items map[string][]Version }
 )
 
 // NodeConfig configures a replica.
+//
+// Every node in a Cluster is built from the same NodeConfig (Config.Node);
+// only ClockSkew is later changed per node, through Cluster.SetSkew.
 type NodeConfig struct {
 	N               int           // replicas per key
 	Policy          Policy        // conflict handling on the replica
@@ -87,28 +36,48 @@ type NodeConfig struct {
 // A node keeps two kinds of state: data, the keys it is a preferred replica
 // for, and hints, writes it accepted as a sloppy-quorum fallback for another
 // node. Both are sibling sets kept in canonical form by rules.merge.
+//
+// All mutable state is guarded by mu. No method holds mu while sending on
+// the network, so a node keeps answering requests while requests it
+// coordinates are in flight.
 type Node struct {
-	ID   string
-	cfg  NodeConfig
-	net  *Network
-	ring *Ring
+	ID   string     // node id, e.g. "n1"; also its network endpoint id
+	cfg  NodeConfig // replica settings (ClockSkew is guarded by mu)
+	net  *Network   // network the node is registered on
+	ring *Ring      // shared ring used to compute preference lists
 
 	mu     sync.Mutex                      // guards data, hints, issued and cfg.ClockSkew
 	data   map[string][]Version            // key -> sibling set for keys this node owns
 	hints  map[string]map[string][]Version // intended owner -> key -> versions
 	issued map[string]uint64               // highest counter this node issued per key
 
-	stop chan struct{}
-	wg   sync.WaitGroup
+	stop chan struct{}  // closed by close to stop the handoff loop
+	wg   sync.WaitGroup // tracks the handoff goroutine so close can wait for it
 
 	coordinated atomic.Int64 // client requests this node coordinated
 }
 
 // Coordinated returns how many client requests this node coordinated.
+//
+// The counter is updated atomically and can be read at any time without
+// locking.
+//
+// Returns:
+//   - int64: the number of client reads and writes (coordGetReq and
+//     coordPutReq) this node has handled since it was created.
 func (nd *Node) Coordinated() int64 { return nd.coordinated.Load() }
 
 // newNode creates a replica and registers it on net. Call start to begin
 // background hinted handoff.
+//
+// Parameters:
+//   - id: the node's id and network endpoint name.
+//   - cfg: replica settings; copied into the node.
+//   - net: the network to register the node's handler on.
+//   - ring: the ring used to compute preference lists and fallbacks.
+//
+// Returns:
+//   - *Node: the registered node, not yet started.
 func newNode(id string, cfg NodeConfig, net *Network, ring *Ring) *Node {
 	nd := &Node{
 		ID: id, cfg: cfg, net: net, ring: ring,
@@ -123,6 +92,9 @@ func newNode(id string, cfg NodeConfig, net *Network, ring *Ring) *Node {
 
 // start launches the background loop that retries hinted handoff every
 // HandoffInterval. A zero interval disables it.
+//
+// The loop runs in its own goroutine until close is called. start must be
+// called at most once per node.
 func (nd *Node) start() {
 	if nd.cfg.HandoffInterval <= 0 {
 		return
@@ -144,19 +116,41 @@ func (nd *Node) start() {
 }
 
 // rules returns the version-ordering rules this node is configured with.
+//
+// Returns:
+//   - rules: the node's Policy and ClockMode, bundled for merging and
+//     comparing versions.
 func (nd *Node) rules() rules { return rules{policy: nd.cfg.Policy, clocks: nd.cfg.Clocks} }
 
 // close stops the background loop and waits for it to exit.
+//
+// Goroutines started for in-flight requests (replication, read repair) are
+// not waited for; they end on their own once their timeouts fire. close
+// must be called at most once per node.
 func (nd *Node) close() { close(nd.stop); nd.wg.Wait() }
 
 // handle is the node's network entry point. It dispatches one request by
 // type and returns the reply. Replica-level requests (putReq, getReq,
 // syncReq) only touch local state; coordinator requests fan out to other
 // replicas.
+//
+// The Network calls it concurrently, once per delivered message. It panics
+// on an unknown request type, which is a programming error rather than a
+// network fault.
+//
+// Parameters:
+//   - from: the id of the sending endpoint.
+//   - req: the request message; one of the types in messages.go.
+//
+// Returns:
+//   - any: the matching response (putResp, getResp, coordPutResp,
+//     coordGetResp or syncResp).
 func (nd *Node) handle(from string, req any) any {
 	switch r := req.(type) {
 	case putReq:
 		nd.mu.Lock()
+		// A hint naming this node itself is ordinary data for it; keeping
+		// it as a hint would only make the node hand it off to itself.
 		if r.Hint != "" && r.Hint != nd.ID {
 			m := nd.hints[r.Hint]
 			if m == nil {
@@ -184,6 +178,16 @@ func (nd *Node) handle(from string, req any) any {
 }
 
 // localRead returns owned versions plus any hinted versions held for others.
+//
+// Hints are included so that a fallback node answering a sloppy read
+// returns the writes it is holding on the owner's behalf. Takes nd.mu.
+//
+// Parameters:
+//   - key: the key to read.
+//
+// Returns:
+//   - []Version: a deep copy of the merged sibling set, safe to use after
+//     the lock is released; empty if the node holds nothing for key.
 func (nd *Node) localRead(key string) []Version {
 	nd.mu.Lock()
 	defer nd.mu.Unlock()
@@ -196,310 +200,16 @@ func (nd *Node) localRead(key string) []Version {
 	return vs
 }
 
-// target is one destination of a coordinated request: the node to contact
-// and, for a sloppy-quorum fallback, the preferred node it stands in for.
-type target struct{ node, hint string }
-
-// targets returns where a request for key goes. Strict quorums always use
-// the N-node preference list. Sloppy quorums replace preferred nodes this
-// coordinator believes are down with the next live nodes on the ring and
-// tag the write with a hint naming the intended owner.
-func (nd *Node) targets(key string, sloppy bool) []target {
-	walk := nd.ring.Walk(key)
-	n := nd.cfg.N
-	pref := walk[:n]
-	out := make([]target, 0, n)
-	if !sloppy {
-		for _, p := range pref {
-			out = append(out, target{node: p})
-		}
-		return out
-	}
-	fallback := walk[n:]
-	fi := 0
-	for _, p := range pref {
-		if nd.net.Reachable(nd.ID, p) {
-			out = append(out, target{node: p})
-			continue
-		}
-		for fi < len(fallback) && !nd.net.Reachable(nd.ID, fallback[fi]) {
-			fi++
-		}
-		if fi < len(fallback) {
-			out = append(out, target{node: fallback[fi], hint: p})
-			fi++
-		} else {
-			out = append(out, target{node: p})
-		}
-	}
-	return out
-}
-
-// coordPut coordinates a client write: it creates the new version, stores
-// it locally, replicates to the other targets and returns once W of them
-// (counting itself) have acknowledged, or once every target has answered or
-// timed out.
-func (nd *Node) coordPut(r coordPutReq) coordPutResp {
-	ts := nd.targets(r.Key, r.Sloppy)
-	selfIdx := -1
-	for i, t := range ts {
-		if t.node == nd.ID && t.hint == "" {
-			selfIdx = i
-		}
-	}
-
-	// Under one lock: pick a fresh counter, apply the write locally and
-	// snapshot the local sibling set. Replicating the whole set (as Riak
-	// does) rather than just the new version guarantees that any replica
-	// holding dot n:k also holds n:k-1 or something that supersedes it, so
-	// a context built from a single replica never claims a write it lacks.
-	//
-	// The new dot's counter must be higher than any counter this node has
-	// used for the key before, including ones it learned about only through
-	// the client's context or through versions replicated back to it.
-	// Reusing a counter would make two different writes share a dot, and one
-	// would silently replace the other.
-	nd.mu.Lock()
-	floor := nd.issued[r.Key]
-	if c := r.Context[nd.ID]; c > floor {
-		floor = c
-	}
-	local := append([]Version(nil), nd.data[r.Key]...)
-	for _, m := range nd.hints {
-		local = append(local, m[r.Key]...)
-	}
-	for _, v := range local {
-		if c := v.Clock()[nd.ID]; c > floor {
-			floor = c
-		}
-	}
-	nd.issued[r.Key] = floor + 1
-	dot := Dot{Node: nd.ID, Counter: floor + 1}
-	ctx := r.Context.Copy()
-	if nd.cfg.Clocks == PerNodeVC {
-		// Plain vector clock: the version's clock is context + own bump.
-		ctx[nd.ID] = dot.Counter
-	}
-	v := Version{Value: r.Value, Dot: dot, Ctx: ctx, TS: time.Now().Add(nd.cfg.ClockSkew).UnixNano(), Origin: nd.ID}
-	if selfIdx >= 0 {
-		nd.data[r.Key] = nd.rules().merge(nd.data[r.Key], v)
-	} else {
-		// Not a replica for this key (sloppy fallback): keep the write as a
-		// hint for the first preferred node so it is never lost here.
-		owner := nd.ring.PreferenceList(r.Key, nd.cfg.N)[0]
-		if nd.hints[owner] == nil {
-			nd.hints[owner] = map[string][]Version{}
-		}
-		nd.hints[owner][r.Key] = nd.rules().merge(nd.hints[owner][r.Key], v)
-	}
-	snapshot := cloneVersions(nd.data[r.Key])
-	for _, m := range nd.hints {
-		snapshot = nd.rules().merge(snapshot, cloneVersions(m[r.Key])...)
-	}
-	if nd.cfg.ReplicateNewOnly {
-		snapshot = []Version{v}
-	}
-	nd.mu.Unlock()
-
-	rctx, cancel := context.WithTimeout(context.Background(), nd.cfg.ReplicaTimeout)
-	acks := make(chan bool, len(ts))
-	for i, t := range ts {
-		if i == selfIdx {
-			acks <- true
-			continue
-		}
-		go func(t target) {
-			_, err := nd.net.Send(rctx, nd.ID, t.node, putReq{Key: r.Key, V: snapshot, Hint: t.hint})
-			acks <- err == nil
-		}(t)
-	}
-	// Count acks until W succeed or every target has answered. Failures
-	// (timeouts, partitions) count towards done but not ok.
-	ok, done := 0, 0
-	for done < len(ts) && ok < r.W {
-		if <-acks {
-			ok++
-		}
-		done++
-	}
-	// Remaining replicas keep receiving the write in the background until
-	// the timeout fires; that lag is what makes R+W<=N reads stale.
-	go func() { <-rctx.Done(); cancel() }()
-	resp := coordPutResp{Version: v, Acks: ok}
-	if ok < r.W {
-		resp.Err = fmt.Errorf("%w: put %d/%d acks", ErrUnavailable, ok, r.W)
-	}
-	return resp
-}
-
-// coordGet coordinates a client read: it asks every target, merges the
-// first R successful replies into one sibling set and returns it. Replies
-// that arrive later are still collected so read repair can use them.
-func (nd *Node) coordGet(r coordGetReq) coordGetResp {
-	ts := nd.targets(r.Key, r.Sloppy)
-	ctx, cancel := context.WithTimeout(context.Background(), nd.cfg.ReplicaTimeout)
-	type reply struct {
-		t   target
-		vs  []Version
-		err error
-	}
-	replies := make(chan reply, len(ts))
-	for _, t := range ts {
-		go func(t target) {
-			resp, err := nd.net.Send(ctx, nd.ID, t.node, getReq{Key: r.Key})
-			var vs []Version
-			if err == nil {
-				vs = resp.(getResp).Versions
-			}
-			replies <- reply{t, vs, err}
-		}(t)
-	}
-	var got []reply
-	var merged []Version
-	done := 0
-	for done < len(ts) && len(got) < r.R {
-		rp := <-replies
-		done++
-		if rp.err == nil {
-			got = append(got, rp)
-			merged = nd.rules().merge(merged, rp.vs...)
-		}
-	}
-	resp := coordGetResp{Versions: cloneVersions(merged), Replies: len(got)}
-	if len(got) < r.R {
-		resp.Err = fmt.Errorf("%w: get %d/%d replies", ErrUnavailable, len(got), r.R)
-	}
-
-	// Read repair: wait for the stragglers, then push the merged state to
-	// every replica that answered with something older.
-	go func() {
-		defer cancel()
-		for ; done < len(ts); done++ {
-			rp := <-replies
-			if rp.err == nil {
-				got = append(got, rp)
-				merged = nd.rules().merge(merged, rp.vs...)
-			}
-		}
-		if !nd.cfg.ReadRepair {
-			return
-		}
-		rctx, rcancel := context.WithTimeout(context.Background(), nd.cfg.ReplicaTimeout)
-		defer rcancel()
-		for _, rp := range got {
-			var missing []Version
-			for _, v := range merged {
-				if !nd.rules().covers(rp.vs, v) {
-					missing = append(missing, v)
-				}
-			}
-			if len(missing) > 0 {
-				go nd.net.Send(rctx, nd.ID, rp.t.node, putReq{Key: r.Key, V: missing, Hint: rp.t.hint})
-			}
-		}
-		<-rctx.Done()
-	}()
-	return resp
-}
-
-// handoffHints delivers versions held for other nodes once they are back.
-// A hint is removed only after its owner acknowledged it, and only the
-// versions that were actually sent: a newer hint for the same key that
-// arrived meanwhile stays for the next round.
-func (nd *Node) handoffHints() {
-	nd.mu.Lock()
-	pending := map[string]map[string][]Version{}
-	for owner, m := range nd.hints {
-		if nd.net.Reachable(nd.ID, owner) {
-			cp := map[string][]Version{}
-			for k, vs := range m {
-				cp[k] = cloneVersions(vs)
-			}
-			pending[owner] = cp
-		}
-	}
-	nd.mu.Unlock()
-	for owner, m := range pending {
-		ctx, cancel := context.WithTimeout(context.Background(), nd.cfg.ReplicaTimeout)
-		allOK := true
-		for k, vs := range m {
-			if _, err := nd.net.Send(ctx, nd.ID, owner, putReq{Key: k, V: vs}); err != nil {
-				allOK = false
-			}
-		}
-		cancel()
-		if allOK {
-			nd.mu.Lock()
-			for k, vs := range m {
-				// drop only what was delivered; newer hints may have arrived
-				if cur, ok := nd.hints[owner][k]; ok {
-					rest := cur[:0:0]
-					for _, c := range cur {
-						if !nd.rules().covers(vs, c) {
-							rest = append(rest, c)
-						}
-					}
-					if len(rest) == 0 {
-						delete(nd.hints[owner], k)
-					} else {
-						nd.hints[owner][k] = rest
-					}
-				}
-			}
-			if len(nd.hints[owner]) == 0 {
-				delete(nd.hints, owner)
-			}
-			nd.mu.Unlock()
-		}
-	}
-}
-
-// itemsFor returns this node's owned keys whose preference list includes peer.
-func (nd *Node) itemsFor(peer string) map[string][]Version {
-	nd.mu.Lock()
-	defer nd.mu.Unlock()
-	out := map[string][]Version{}
-	for k, vs := range nd.data {
-		for _, p := range nd.ring.PreferenceList(k, nd.cfg.N) {
-			if p == peer {
-				out[k] = cloneVersions(vs)
-				break
-			}
-		}
-	}
-	return out
-}
-
-// absorb merges versions received during anti-entropy into owned data.
-func (nd *Node) absorb(items map[string][]Version) {
-	nd.mu.Lock()
-	defer nd.mu.Unlock()
-	for k, vs := range items {
-		nd.data[k] = nd.rules().merge(nd.data[k], cloneVersions(vs)...)
-	}
-}
-
-// handleSync answers an anti-entropy request: take the peer's items, then
-// send back everything this node owns that the peer should also hold.
-func (nd *Node) handleSync(from string, r syncReq) syncResp {
-	nd.absorb(r.Items)
-	return syncResp{Items: nd.itemsFor(from)}
-}
-
-// syncWith runs one anti-entropy exchange with peer (a full-state exchange
-// standing in for Dynamo's Merkle-tree comparison).
-func (nd *Node) syncWith(peer string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), nd.cfg.ReplicaTimeout)
-	defer cancel()
-	resp, err := nd.net.Send(ctx, nd.ID, peer, syncReq{Items: nd.itemsFor(peer)})
-	if err != nil {
-		return err
-	}
-	nd.absorb(resp.(syncResp).Items)
-	return nil
-}
-
 // Snapshot returns the versions this node owns for key (no hints).
+//
+// It is meant for tests and benchmarks that inspect replica state directly.
+// Takes nd.mu.
+//
+// Parameters:
+//   - key: the key to inspect.
+//
+// Returns:
+//   - []Version: a deep copy of the node's owned sibling set for key.
 func (nd *Node) Snapshot(key string) []Version {
 	nd.mu.Lock()
 	defer nd.mu.Unlock()
@@ -507,6 +217,12 @@ func (nd *Node) Snapshot(key string) []Version {
 }
 
 // HintCount returns how many hinted keys this node is holding.
+//
+// Takes nd.mu.
+//
+// Returns:
+//   - int: the number of (owner, key) pairs with undelivered hints; zero
+//     once hinted handoff has delivered everything.
 func (nd *Node) HintCount() int {
 	nd.mu.Lock()
 	defer nd.mu.Unlock()

@@ -1,15 +1,21 @@
+// This file defines how a stored value and its causal history are
+// represented: Dot (the identity of one write), Version (a value plus its
+// dotted version vector) and the two settings that change how versions are
+// compared, Policy (siblings or last-writer-wins) and ClockMode (dotted
+// version vectors or per-node vector clocks). The merge rules that use them
+// are in merge.go.
+
 package store
 
-import (
-	"sort"
-
-	"dynamostore/vclock"
-)
+import "dynamostore/vclock"
 
 // Dot names one update: the Counter-th write coordinated by Node for a key.
+//
+// Dots are unique per key: a coordinator never issues the same counter
+// twice for one key (see coordPut).
 type Dot struct {
-	Node    string
-	Counter uint64
+	Node    string // id of the coordinating node
+	Counter uint64 // per-key write counter on that node, starting at 1
 }
 
 // Version is one value of a key together with its causal history.
@@ -19,14 +25,18 @@ type Dot struct {
 // it wrote (the context returned by its last Get). Clock() = Ctx ∪ Dot is
 // the plain vector clock of the version.
 type Version struct {
-	Value  string
-	Dot    Dot
-	Ctx    vclock.VC
-	TS     int64  // coordinator wall-clock time in ns; used only by LWW
-	Origin string // coordinating node; LWW tie-breaker
+	Value  string    // the stored value
+	Dot    Dot       // identity of the write that produced this version
+	Ctx    vclock.VC // causal context the writer had seen
+	TS     int64     // coordinator wall-clock time in ns; used only by LWW
+	Origin string    // coordinating node; LWW tie-breaker
 }
 
 // Clock returns the version's vector clock.
+//
+// Returns:
+//   - vclock.VC: a new clock equal to Ctx with the Dot's entry raised to
+//     its counter; the caller may modify it.
 func (v Version) Clock() vclock.VC {
 	c := v.Ctx.Copy()
 	if c[v.Dot.Node] < v.Dot.Counter {
@@ -37,6 +47,12 @@ func (v Version) Clock() vclock.VC {
 
 // Covers reports whether v's writer had seen w (or v is w): w's dot is in
 // v's causal context.
+//
+// Parameters:
+//   - w: the version to test.
+//
+// Returns:
+//   - bool: true if v is w or causally descends from it.
 func (v Version) Covers(w Version) bool {
 	return v.Dot == w.Dot || v.Ctx[w.Dot.Node] >= w.Dot.Counter
 }
@@ -54,6 +70,9 @@ const (
 )
 
 // String returns the policy's name as used in benchmark tables.
+//
+// Returns:
+//   - string: "last-writer-wins" or "siblings+client-reconcile".
 func (p Policy) String() string {
 	if p == LastWriterWins {
 		return "last-writer-wins"
@@ -76,114 +95,12 @@ const (
 )
 
 // String returns the clock mode's name as used in benchmark tables.
+//
+// Returns:
+//   - string: "per-node vector clock" or "dotted version vector".
 func (m ClockMode) String() string {
 	if m == PerNodeVC {
 		return "per-node vector clock"
 	}
 	return "dotted version vector"
-}
-
-// rules bundles the two settings that decide how versions compare. Every
-// merge and comparison goes through it, so replicas, coordinators and repair
-// all apply the same ordering.
-type rules struct {
-	policy Policy
-	clocks ClockMode
-}
-
-// obsoletes reports whether a supersedes b.
-func (r rules) obsoletes(a, b Version) bool {
-	if a.Dot == b.Dot {
-		return false
-	}
-	if r.clocks == PerNodeVC {
-		return vclock.Compare(a.Clock(), b.Clock()) == vclock.After
-	}
-	return a.Covers(b)
-}
-
-// same reports whether a and b are indistinguishable to the store.
-func (r rules) same(a, b Version) bool {
-	if r.clocks == PerNodeVC {
-		return vclock.Compare(a.Clock(), b.Clock()) == vclock.Equal
-	}
-	return a.Dot == b.Dot
-}
-
-// lwwBeats reports whether a wins over b under last-writer-wins. Causal
-// order is respected first; only concurrent versions fall back to the
-// timestamp, and equal timestamps to the coordinating node's id, so every
-// replica picks the same winner.
-func (r rules) lwwBeats(a, b Version) bool {
-	switch {
-	case r.same(a, b) || r.obsoletes(b, a):
-		return false
-	case r.obsoletes(a, b):
-		return true
-	case a.TS != b.TS:
-		return a.TS > b.TS
-	}
-	return a.Origin > b.Origin
-}
-
-// merge folds incoming into set and returns the new set. Versions
-// superseded by another version are dropped. Under KeepSiblings the result
-// holds only mutually concurrent versions; under LastWriterWins it holds at
-// most one. Merge is commutative and idempotent, so replicas that receive
-// the same versions in any order, or more than once, end up identical.
-func (r rules) merge(set []Version, incoming ...Version) []Version {
-	for _, v := range incoming {
-		if r.policy == LastWriterWins {
-			if len(set) == 0 || r.lwwBeats(v, set[0]) {
-				set = []Version{v}
-			}
-			continue
-		}
-		dominated := false
-		kept := set[:0:0]
-		for _, e := range set {
-			switch {
-			case r.same(e, v) || r.obsoletes(e, v):
-				dominated = true
-				kept = append(kept, e)
-			case r.obsoletes(v, e):
-				// e is obsolete; drop it
-			default:
-				kept = append(kept, e)
-			}
-		}
-		if !dominated {
-			kept = append(kept, v)
-		}
-		set = kept
-	}
-	sortVersions(set)
-	return set
-}
-
-// covers reports whether set already holds v or something superseding it.
-func (r rules) covers(set []Version, v Version) bool {
-	for _, e := range set {
-		if r.same(e, v) || r.obsoletes(e, v) {
-			return true
-		}
-	}
-	return false
-}
-
-// sortVersions orders a sibling set deterministically, so replicas holding
-// the same versions also return them in the same order.
-func sortVersions(vs []Version) {
-	sort.Slice(vs, func(i, j int) bool { return vs[i].Clock().String() < vs[j].Clock().String() })
-}
-
-// cloneVersions deep-copies versions (including their context maps) so the
-// copy can leave the lock that guards the original.
-func cloneVersions(vs []Version) []Version {
-	out := make([]Version, len(vs))
-	for i, v := range vs {
-		v.Ctx = v.Ctx.Copy()
-		out[i] = v
-	}
-	return out
 }

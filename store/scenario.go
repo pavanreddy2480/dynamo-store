@@ -1,62 +1,51 @@
+// This file implements the end-to-end partition scenario: two clients
+// update the same key on opposite sides of a network partition, the
+// partition heals, the repair mechanisms run, and the declared resolution
+// rule is checked against what the replicas converged to. It is used by
+// the tests and by the command-line tools to compare conflict policies.
+
 package store
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 )
 
-// UnionResolver treats values as comma-separated sets (a shopping cart) and
-// returns their union. It is the explicit, declared resolution rule for the
-// sibling policy: no acknowledged item is ever lost.
-func UnionResolver(values []string) string {
-	set := map[string]bool{}
-	for _, v := range values {
-		for _, it := range strings.Split(v, ",") {
-			if it != "" {
-				set[it] = true
-			}
-		}
-	}
-	items := make([]string, 0, len(set))
-	for it := range set {
-		items = append(items, it)
-	}
-	sort.Strings(items)
-	return strings.Join(items, ",")
-}
-
 // ScenarioOptions configures RunPartitionScenario.
 type ScenarioOptions struct {
-	Policy Policy
-	R, W   int
-	Sloppy bool
+	Policy Policy // conflict handling on every replica
+	R, W   int    // quorums used by the two writing clients
+	Sloppy bool   // whether the writing clients use sloppy quorums
 	// SkewMinority shifts the minority side coordinator's clock; with LWW a
 	// positive skew lets the earlier write win.
 	SkewMinority time.Duration
-	Seed         int64
+	Seed         int64 // network seed; 0 keeps DefaultConfig's seed
 }
 
 // ScenarioResult reports what happened and whether the rule held.
 type ScenarioResult struct {
-	Opts         ScenarioOptions
-	Key          string
-	PrefList     []string
-	SideA, SideB []string
-	WriteA       string
-	WriteB       string
-	ErrA, ErrB   error
-	Siblings     []Version // returned by an R=N read after healing
-	Final        string    // value after applying the resolution rule
-	Expected     string    // what the declared rule says the value must be
-	Converged    bool      // every replica holds exactly one, identical version
-	RuleHolds    bool
-	AckedKept    bool // every acknowledged item survives in the final value
-	Log          []string
+	Opts         ScenarioOptions // the options the scenario ran with
+	Key          string          // the key both sides updated
+	PrefList     []string        // the key's N preferred replicas
+	SideA, SideB []string        // endpoints on each side of the partition
+	WriteA       string          // value written by the client on side A
+	WriteB       string          // value written by the client on side B
+	ErrA, ErrB   error           // outcome of each side's write
+	Siblings     []Version       // returned by an R=N read after healing
+	Final        string          // value after applying the resolution rule
+	Expected     string          // what the declared rule says the value must be
+	Converged    bool            // every replica holds exactly one, identical version
+	RuleHolds    bool            // converged and Final == Expected (and AckedKept for siblings)
+	AckedKept    bool            // every acknowledged item survives in the final value
+	Log          []string        // human-readable narrative of each step
 }
 
 // logf appends one line to the scenario's narrative log.
+//
+// Parameters:
+//   - format: a fmt.Sprintf format string.
+//   - a: the format arguments.
 func (r *ScenarioResult) logf(format string, a ...any) {
 	r.Log = append(r.Log, fmt.Sprintf(format, a...))
 }
@@ -69,6 +58,18 @@ func (r *ScenarioResult) logf(format string, a ...any) {
 // it; partition; write {eggs,milk} on side A and {bread,milk} on side B;
 // heal and run hinted handoff plus anti-entropy; read with R=N; apply the
 // rule; and finally check every replica holds one identical version.
+//
+// It builds and closes its own Cluster from DefaultConfig, and blocks while
+// it sleeps to let replication and repair finish between steps.
+//
+// Parameters:
+//   - o: the policy, quorums and fault settings to run with.
+//
+// Returns:
+//   - ScenarioResult: the writes, the siblings seen after healing, the
+//     final value and whether the rule held, plus a step-by-step log. If
+//     the initial write or a post-heal read fails, the result is returned
+//     early with RuleHolds false and the failure in Log.
 func RunPartitionScenario(o ScenarioOptions) ScenarioResult {
 	cfg := DefaultConfig()
 	cfg.Node.Policy = o.Policy
@@ -80,6 +81,8 @@ func RunPartitionScenario(o ScenarioOptions) ScenarioResult {
 
 	const key = "cart:alice"
 	res := ScenarioResult{Opts: o, Key: key}
+	// The first three ring nodes are the key's replicas (N=3); the others
+	// serve as sloppy-quorum fallbacks, one on each side of the partition.
 	walk := c.Ring.Walk(key)
 	pref, others := walk[:3], walk[3:]
 	res.PrefList = pref
@@ -100,6 +103,7 @@ func RunPartitionScenario(o ScenarioOptions) ScenarioResult {
 	ra, _ := a.Get(key)
 	rb, _ := b.Get(key)
 
+	// Side A holds one replica (the minority), side B the other two.
 	res.SideA = []string{pref[0], others[0], "clientA"}
 	res.SideB = []string{pref[1], pref[2], others[1], "clientB"}
 	c.Net.Partition(res.SideA, res.SideB)
@@ -180,6 +184,8 @@ func RunPartitionScenario(o ScenarioOptions) ScenarioResult {
 		}
 		res.Expected = "milk"
 		if len(acked) > 0 {
+			// Apply the replicas' own LWW comparison so the expectation
+			// matches exactly what every replica should have kept.
 			win := acked[0]
 			for _, v := range acked[1:] {
 				if (rules{policy: LastWriterWins}).lwwBeats(v, win) {
@@ -195,6 +201,8 @@ func RunPartitionScenario(o ScenarioOptions) ScenarioResult {
 		}
 	}
 
+	// Give the reconciling write (or LWW replication) time to land, then
+	// run one more anti-entropy round before checking every replica.
 	time.Sleep(3 * cfg.Node.ReplicaTimeout)
 	c.AntiEntropy()
 	final, _ := reader.Get(key)
@@ -213,6 +221,8 @@ func RunPartitionScenario(o ScenarioOptions) ScenarioResult {
 	if o.Policy == KeepSiblings {
 		res.RuleHolds = res.RuleHolds && res.AckedKept
 	} else {
+		// Under LWW, AckedKept measures the cost of the policy: it is
+		// false whenever an acknowledged write was discarded.
 		res.AckedKept = isSubset(UnionResolver(ackedVals), res.Final)
 	}
 	res.logf("final {%s}, expected by rule {%s}, converged=%v -> rule holds=%v",
@@ -221,6 +231,12 @@ func RunPartitionScenario(o ScenarioOptions) ScenarioResult {
 }
 
 // errStr renders a put outcome for the log.
+//
+// Parameters:
+//   - err: the error returned by Put, or nil.
+//
+// Returns:
+//   - string: "ok" for nil, otherwise "FAILED (<error text>)".
 func errStr(err error) string {
 	if err == nil {
 		return "ok"
@@ -229,24 +245,16 @@ func errStr(err error) string {
 }
 
 // describe renders a sibling set as {value}[clock] pairs.
+//
+// Parameters:
+//   - vs: the versions to render.
+//
+// Returns:
+//   - string: the versions separated by spaces, e.g. "{milk}[n1:1]".
 func describe(vs []Version) string {
 	parts := make([]string, len(vs))
 	for i, v := range vs {
 		parts[i] = fmt.Sprintf("{%s}%v", v.Value, v.Clock())
 	}
 	return strings.Join(parts, " ")
-}
-
-// isSubset reports whether every item of comma-separated set a is in b.
-func isSubset(a, b string) bool {
-	have := map[string]bool{}
-	for _, it := range strings.Split(b, ",") {
-		have[it] = true
-	}
-	for _, it := range strings.Split(a, ",") {
-		if it != "" && !have[it] {
-			return false
-		}
-	}
-	return true
 }

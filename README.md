@@ -29,11 +29,18 @@ Requires Go 1.22+ and has no external dependencies.
 | Path | What |
 |---|---|
 | `vclock/` | vector clocks: compare, merge, increment |
-| `store/version.go` | versions, dots, sibling merge, LWW, clock modes |
+| `store/doc.go` | package overview |
+| `store/version.go` | versions, dots, conflict policies, clock modes |
+| `store/merge.go` | ordering rules: supersedes, sibling merge, LWW |
 | `store/network.go` | simulated network: latency model, partitions, slow nodes |
 | `store/ring.go` | consistent hashing and preference lists |
-| `store/node.go` | replica and coordinator logic, quorums, hinted handoff, read repair, anti-entropy |
-| `store/cluster.go` | cluster setup and the `Client` (R/W settings, `Get`, `Put`, `GetResolved`) |
+| `store/messages.go` | request and response messages between clients and nodes |
+| `store/node.go` | replica state and request dispatch |
+| `store/coordinator.go` | coordinator logic: targets, sloppy fallbacks, quorum reads and writes, read repair |
+| `store/repair.go` | hinted handoff and anti-entropy |
+| `store/cluster.go` | cluster setup |
+| `store/client.go` | the `Client` (R/W settings, `Get`, `Put`, `GetResolved`) |
+| `store/resolver.go` | `UnionResolver`, the declared reconciliation rule |
 | `store/scenario.go` | the partition and reconcile scenario used by the demo and tests |
 | `cmd/bench` | experiments E1–E3 (quorum sweep, concurrent updates, partition availability) |
 | `cmd/archbench` | experiments A1–A5 behind the architecture decisions |
