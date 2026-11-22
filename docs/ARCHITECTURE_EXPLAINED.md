@@ -4,7 +4,7 @@ This guide walks through the whole project in the order you need to understand i
 
 It describes the `main` branch, which runs the whole system as a **simulation inside one Go program**. The "network" is fake (messages are passed in memory with a random delay), which lets us create network failures on purpose and measure what happens.
 
-> **Tip:** If a word is new, check the [glossary](#15-glossary) at the end.
+> **Tip:** If a word is new, check the [glossary](#16-glossary) at the end.
 
 ---
 
@@ -23,8 +23,9 @@ It describes the `main` branch, which runs the whole system as a **simulation in
 11. [Component 7: the three repair helpers (`store/repair.go`)](#11-component-7-the-three-repair-helpers)
 12. [Component 8: the client, the resolver and the cluster](#12-component-8-the-client-the-resolver-and-the-cluster)
 13. [Putting it all together: the partition story, step by step](#13-putting-it-all-together-the-partition-story)
-14. [The programs in `cmd/` and what they prove](#14-the-programs-in-cmd-and-what-they-prove)
-15. [Glossary](#15-glossary)
+14. [Under the hood: how each component is implemented](#14-under-the-hood-how-each-component-is-implemented)
+15. [The programs in `cmd/` and what they prove](#15-the-programs-in-cmd-and-what-they-prove)
+16. [Glossary](#16-glossary)
 
 ---
 
@@ -80,25 +81,29 @@ For comparison, the code also has a simpler, worse policy, **last-writer-wins (L
 
 ## 3. The whole picture in one drawing
 
+<div align="center">
+
 ```
-                         ┌──────────────────────────────────────────────────────────┐
-                         │                     Cluster  (cluster.go)                │
-                         │                                                          │
-   ┌──────────┐  Get/Put │   ┌─────────────────── Network (network.go) ───────────┐ │
-   │ Client A │──────────┼──▶│  in-memory "post office": every message waits a    │ │
-   │ R=2, W=2 │◀─────────┼───│  random delay, and is DROPPED if sender and        │ │
-   └──────────┘          │   │  receiver are on different sides of a partition    │ │
-                         │   └───▲───────▲────────▲────────▲────────▲─────────────┘ │
-   ┌──────────┐          │       │       │        │        │        │               │
-   │ Client B │──────────┼──▶ ┌──┴─┐  ┌──┴─┐   ┌──┴─┐   ┌──┴─┐   ┌──┴─┐             │
-   │ R=1, W=1 │◀─────────┼─── │ n1 │  │ n2 │   │ n3 │   │ n4 │   │ n5 │  Nodes      │
-   └──────────┘          │    └────┘  └────┘   └────┘   └────┘   └────┘  (node.go)  │
-                         │       every node: stores data, stores hints,             │
-                         │       can act as coordinator, runs repair                │
-                         │                                                          │
-                         │   Ring (ring.go): tells everyone which 3 nodes own a key │
-                         └──────────────────────────────────────────────────────────┘
+                      +----------------------------------------------------------+
+                      |                     Cluster  (cluster.go)                |
+                      |                                                          |
++----------+  Get/Put |   +------------------- Network (network.go) -----------+ |
+| Client A |----------+-->|  in-memory "post office": every message waits a    | |
+| R=2, W=2 |<---------+---|  random delay, and is DROPPED if sender and        | |
++----------+          |   |  receiver are on different sides of a partition    | |
+                      |   +---^-------^--------^--------^--------^-------------+ |
++----------+          |       |       |        |        |        |               |
+| Client B |----------+--> +--+-+  +--+-+   +--+-+   +--+-+   +--+-+             |
+| R=1, W=1 |<---------+--- | n1 |  | n2 |   | n3 |   | n4 |   | n5 |  Nodes      |
++----------+          |    +----+  +----+   +----+   +----+   +----+  (node.go)  |
+                      |       every node: stores data, stores hints,             |
+                      |       can act as coordinator, runs repair                |
+                      |                                                          |
+                      |   Ring (ring.go): tells everyone which 3 nodes own a key |
+                      +----------------------------------------------------------+
 ```
+
+</div>
 
 * **Clients** are the callers. Each client has its own R and W.
 * **Nodes** `n1`..`n5` are the storage computers. They are all equal: any of them can store data and any of them can be the coordinator for a request.
@@ -110,33 +115,37 @@ For comparison, the code also has a simpler, worse policy, **last-writer-wins (L
 
 Read the components in this order; each one only uses the ones above it:
 
+<div align="center">
+
 ```
-  vclock/vclock.go            counting "what have I seen?"
-        │
-        ▼
-  store/version.go            one stored value + its history (Dot, Version)
-        │
-        ▼
-  store/merge.go              rules: which version replaces which
-        │
-        ▼
-  store/ring.go               which nodes own which key
-  store/network.go            fake network with delays and partitions
-  store/messages.go           the envelopes sent over the network
-        │
-        ▼
-  store/node.go               one storage computer
-  store/coordinator.go        a node handling a client's request
-  store/repair.go             hinted handoff + anti-entropy
-        │
-        ▼
-  store/client.go             what the application calls: Get / Put
-  store/resolver.go           how the application merges siblings
-  store/cluster.go            builds and owns everything
-        │
-        ▼
-  store/scenario.go, cmd/*    experiments that use all of the above
+vclock/vclock.go            counting "what have I seen?"                 
+      |                                                                  
+      v                                                                  
+store/version.go            one stored value + its history (Dot, Version)
+      |                                                                  
+      v                                                                  
+store/merge.go              rules: which version replaces which          
+      |                                                                  
+      v                                                                  
+store/ring.go               which nodes own which key                    
+store/network.go            fake network with delays and partitions      
+store/messages.go           the envelopes sent over the network          
+      |                                                                  
+      v                                                                  
+store/node.go               one storage computer                         
+store/coordinator.go        a node handling a client's request           
+store/repair.go             hinted handoff + anti-entropy                
+      |                                                                  
+      v                                                                  
+store/client.go             what the application calls: Get / Put        
+store/resolver.go           how the application merges siblings          
+store/cluster.go            builds and owns everything                   
+      |                                                                  
+      v                                                                  
+store/scenario.go, cmd/*    experiments that use all of the above        
 ```
+
+</div>
 
 ---
 
@@ -146,64 +155,76 @@ Before looking at each piece, here is the journey of one write and one read, so 
 
 ### A write (`Put`) with W = 2
 
+<div align="center">
+
 ```
- Client                 n2 (coordinator)               n5                 n4
-   │                          │                         │                  │
-   │ 1. Put("cart:alice",     │                         │                  │
-   │    "eggs,milk", context) │                         │                  │
-   │─────────────────────────▶│                         │                  │
-   │                          │ 2. make a new version,  │                  │
-   │                          │    give it a unique     │                  │
-   │                          │    name (dot n2:1),     │                  │
-   │                          │    save it locally      │                  │
-   │                          │    ── that's ack #1 ──  │                  │
-   │                          │                         │                  │
-   │                          │ 3. putReq ─────────────▶│                  │
-   │                          │ 3. putReq ─────────────────────────────── ▶│
-   │                          │                         │ saves, replies   │
-   │                          │◀──────────── putResp ───│                  │
-   │                          │  ack #2  →  W=2 reached │                  │
-   │◀──────── 4. "ok" ────────│                         │                  │
-   │                          │                         │     (slow...)    │
-   │                          │◀────────────────────────────── putResp ────│
-   │                          │  5. arrives later; the client already left │
+Client                 n2 (coordinator)               n5                 n4
+  |                          |                         |                  |
+  | 1. Put("cart:alice",     |                         |                  |
+  |    "eggs,milk", context) |                         |                  |
+  |------------------------->|                         |                  |
+  |                          | 2. make a new version,  |                  |
+  |                          |    give it a unique     |                  |
+  |                          |    name (dot n2:1),     |                  |
+  |                          |    save it locally      |                  |
+  |                          |    -- that's ack #1 --  |                  |
+  |                          |                         |                  |
+  |                          | 3. putReq ------------->|                  |
+  |                          | 3. putReq -------------------------------->|
+  |                          |                         | saves, replies   |
+  |                          |<------------ putResp ---|                  |
+  |                          |  ack #2 -> W=2 reached  |                  |
+  |<-------- 4. "ok" --------|                         |                  |
+  |                          |                         |     (slow...)    |
+  |                          |<------------------------------ putResp ----|
+  |                          |  5. arrives later; the client already left |
 ```
+
+</div>
 
 The important part is step 5: **n4 gets the write a bit later**. If someone reads from n4 in that gap with R = 1, they see the old list. That is exactly where stale reads come from.
 
 ### A read (`Get`) with R = 2
 
+<div align="center">
+
 ```
- Client                 n5 (coordinator)               n2                 n4
-   │ 1. Get("cart:alice")     │                         │                  │
-   │─────────────────────────▶│ 2. ask everyone (itself │                  │
-   │                          │    included) ── getReq ▶│                  │
-   │                          │ ──────────────── getReq ──────────────────▶│
-   │                          │ own copy  = reply #1    │                  │
-   │                          │◀──── {eggs,milk} ───────│  reply #2        │
-   │                          │ 3. merge the 2 replies  │                  │
-   │◀── 4. versions+context ──│                         │                  │
-   │                          │◀────────────────────────────── {milk} ─────│ late reply
-   │                          │ 5. READ REPAIR: n4 is behind,              │
-   │                          │    send it {eggs,milk} ── putReq ─────────▶│
+Client                 n5 (coordinator)               n2                 n4           
+  | 1. Get("cart:alice")     |                         |                  |           
+  |------------------------->| 2. ask everyone (itself |                  |           
+  |                          |    included) -- getReq >|                  |           
+  |                          | ---------------- getReq ------------------>|           
+  |                          | own copy  = reply #1    |                  |           
+  |                          |<---- {eggs,milk} -------|  reply #2        |           
+  |                          | 3. merge the 2 replies  |                  |           
+  |<-- 4. versions+context --|                         |                  |           
+  |                          |<------------------------------ {milk} -----| late reply
+  |                          | 5. READ REPAIR: n4 is behind,              |           
+  |                          |    send it {eggs,milk} -- putReq --------->|           
 ```
+
+</div>
 
 The client gets back **every version** that the R replies contained, plus a **context** (a summary of their history). The next `Put` must carry that context so the store knows what the writer had seen.
 
 ### Why R + W > N means "no stale reads"
 
+<div align="center">
+
 ```
-   3 replicas:          [ n2 ]  [ n5 ]  [ n4 ]
-
-   write reached W=2:   [ ✔  ]  [ ✔  ]  [    ]
-   read asked R=2:              [ ?  ]  [ ?  ]
-
-   2 + 2 = 4 > 3, so the two groups MUST share at least one node (n5 here).
-   That shared node has the new value, so the read sees it.
-
-   With R=1, W=1 (1 + 1 = 2, not > 3) the read can land only on n4,
-   which hasn't heard yet  →  stale read.
+3 replicas:          [ n2 ]  [ n5 ]  [ n4 ]                             
+                                                                        
+write reached W=2:   [ ok ]  [ ok ]  [    ]                             
+read asked R=2:              [ ?? ]  [ ?? ]                             
+                                                                        
+2 + 2 = 4 > 3, so the two groups MUST share at least one node (n5 here).
+That shared node has the new value, so the read sees it.                
+                                                                        
+With R=1, W=1 (1 + 1 = 2, not > 3) the read can land only on n4,        
+which hasn't heard yet  ->  stale read.                                 
 ```
+
+</div>
 
 In our measurements (no failures), R = W = 1 gave **21.5% stale reads**, and every setting with R + W > 3 gave **0%** (see `REPORT.md`).
 
@@ -218,18 +239,22 @@ Each friend keeps a tally on the notebook: "n2 has made 1 change, n5 has made 1 
 * If one tally is **at least as big in every column**, it has seen everything the other saw, so it is **newer**.
 * If each tally is bigger in **some** column, each saw something the other didn't. They happened **at the same time** (concurrent). Neither may replace the other.
 
-```
-   A = [n2:1  n5:1]          B = [n4:1  n5:1]
+<div align="center">
 
-          n2   n4   n5
-     A:    1    0    1
-     B:    0    1    1
-           ▲    ▲
-           A>B  B>A    → each wins somewhere → CONCURRENT
-
-   C = [n2:1 n4:2 n5:1]
-     C vs A:  1≥1, 2≥0, 1≥1   → C is AFTER A (C saw everything A saw)
 ```
+A = [n2:1  n5:1]          B = [n4:1  n5:1]                            
+                                                                      
+       n2   n4   n5                                                   
+  A:    1    0    1                                                   
+  B:    0    1    1                                                   
+        ^    ^                                                        
+        A>B  B>A    -> each wins somewhere -> CONCURRENT              
+                                                                      
+C = [n2:1 n4:2 n5:1]                                                  
+  C vs A:  1>=1, 2>=0, 1>=1   -> C is AFTER A (C saw everything A saw)
+```
+
+</div>
 
 ### The code
 
@@ -254,12 +279,16 @@ Each friend keeps a tally on the notebook: "n2 has made 1 change, n5 has made 1 
 
 The Dynamo paper's recipe is: "the coordinator bumps its own column". Picture two clients who both read `[n1:1]` and both write **through the same coordinator** n1:
 
-```
-   client X writes "eggs"  via n1  → clock [n1:2]
-   client Y writes "bread" via n1  → clock [n1:3]
+<div align="center">
 
-   Compare: [n1:3] is AFTER [n1:2]  → "bread" silently replaces "eggs"
 ```
+client X writes "eggs"  via n1  -> clock [n1:2]                     
+client Y writes "bread" via n1  -> clock [n1:3]                     
+                                                                    
+Compare: [n1:3] is AFTER [n1:2]  -> "bread" silently replaces "eggs"
+```
+
+</div>
 
 But X and Y never saw each other's write! They were concurrent, and "eggs" was lost. In our benchmark this plain scheme lost **585 of 3055** acknowledged items. That is why the code uses a sharper idea.
 
@@ -272,13 +301,17 @@ Each version stores two things separately:
 
 The rule becomes: **version A replaces version B only if B's dot is inside A's context**, meaning A's author actually saw B.
 
-```
-   X: dot n1:2, ctx [n1:1]       Y: dot n1:3, ctx [n1:1]
+<div align="center">
 
-   Does Y's ctx contain X's dot n1:2?   ctx[n1]=1, and 1 < 2  → NO
-   Does X's ctx contain Y's dot n1:3?   1 < 3                 → NO
-   → concurrent → keep BOTH as siblings → nothing lost  ✔
 ```
+X: dot n1:2, ctx [n1:1]       Y: dot n1:3, ctx [n1:1]           
+                                                                
+Does Y's ctx contain X's dot n1:2?   ctx[n1]=1, and 1 < 2  -> NO
+Does X's ctx contain Y's dot n1:3?   1 < 3                 -> NO
+-> concurrent -> keep BOTH as siblings -> nothing lost          
+```
+
+</div>
 
 With this, the same benchmark lost **0** items.
 
@@ -328,14 +361,18 @@ Everything goes through one small struct, `rules{policy, clocks}`, so every node
 | `lwwBeats(a, b)` | LWW winner: causal order first, then higher timestamp, then higher node id on a tie |
 | `covers(set, v)` | Does the pile already have `v` or something newer? Used by repair to send only what is missing |
 
-```
-   pile:      [ {eggs,milk} dot n2:1 ]
-   incoming:    {bread,milk} dot n4:1, ctx [n5:1]
+<div align="center">
 
-   n2:1 covered by incoming?  ctx[n2]=0 < 1  → no
-   n4:1 covered by pile?      pile ctx[n4]=0 → no
-   → pile becomes [ {eggs,milk} , {bread,milk} ]   two siblings
 ```
+pile:      [ {eggs,milk} dot n2:1 ]                          
+incoming:    {bread,milk} dot n4:1, ctx [n5:1]               
+                                                             
+n2:1 covered by incoming?  ctx[n2]=0 < 1  -> no              
+n4:1 covered by pile?      pile ctx[n4]=0 -> no              
+-> pile becomes [ {eggs,milk} , {bread,milk} ]   two siblings
+```
+
+</div>
 
 Two properties make the whole system converge:
 
@@ -352,18 +389,30 @@ So it is always safe to resend data, which the repair helpers do freely. After m
 
 Draw a big clock face. Each of the 5 friends sticks **64 small flags** with their name at random-looking spots around it. To find where a key lives, you turn the key's name into a spot on the clock face, then **walk clockwise** and write down the first **3 different** names you meet. Those 3 friends keep that key.
 
+<div align="center">
+
 ```
-                       12 o'clock
-                   n3 ●       ● n1
-               n5 ●             ● n2          (in reality 5 × 64 = 320 flags,
-                 ●     ring       ● n4         drawn here as just a few)
-               n1 ●             ● n5
-                   n2 ●   ●   ● n3
-                        n4
-     key "cart:alice" hashes to here ──▶ ✱
-     walk clockwise from ✱:  n2, n5, (n2 again, skip), n4   → preference list [n2 n5 n4]
-     keep walking:           n1, n3                         → fallbacks for sloppy quorums
+                      12 o'clock                                       
+               n3 o---------------o n1                                 
+                 /                 \                                   
+            n4  o                   *  <-- key "cart:alice" hashes here
+                |                   |                                  
+            n1  o      the ring     o  n2   1st distinct node: n2      
+                |    (clockwise)    |                                  
+            n4  o                   o  n2   n2 again: skip             
+                 \                 /                                   
+               n4 o---------------o n5      2nd distinct node: n5      
+                  ^                                                    
+                  3rd distinct node: n4                                
+                                                                       
+keep walking: n4 (skip), n1, n4 (skip), n3, n1 (skip)                  
+                                                                       
+preference list (first 3 distinct nodes):  [n2 n5 n4]                  
+fallbacks (the rest, in walk order):       [n1 n3]                     
+(the real ring has 5 x 64 = 320 flags; only 9 are drawn here)          
 ```
+
+</div>
 
 Why 64 flags per friend instead of one? With one flag each, some friends would own big arcs and others tiny ones. Many small flags spread keys (and work) evenly.
 
@@ -383,14 +432,18 @@ The ring never changes after it is built, so everyone can read it at the same ti
 
 All messages go through a pretend **post office**. Each letter waits a random amount of time before delivery. We can also build a **wall** (a partition): letters between the two sides are silently thrown away. Nobody is told "your letter was lost"; the sender just waits, and gives up when its **timeout** runs out, exactly like a real network.
 
+<div align="center">
+
 ```
-          side A                 ║               side B
-   ┌──────┐  ┌──────┐  ┌───────┐ ║ ┌──────┐ ┌──────┐ ┌──────┐ ┌───────┐
-   │  n2  │  │  n1  │  │clientA│ ║ │  n5  │ │  n4  │ │  n3  │ │clientB│
-   └──────┘  └──────┘  └───────┘ ║ └──────┘ └──────┘ └──────┘ └───────┘
-                                 ║
-     n2 ── putReq ──▶ n5 :   ✉ ──╫──▶ 🗑  dropped. n2 waits 20 ms, then "timeout"
+       side A                 #               side B                       
++------+  +------+  +-------+ # +------+ +------+ +------+ +-------+       
+|  n2  |  |  n1  |  |clientA| # |  n5  | |  n4  | |  n3  | |clientB|       
++------+  +------+  +-------+ # +------+ +------+ +------+ +-------+       
+                              #                                            
+  n2 -- putReq ------------#--> X   dropped. n2 waits 20 ms, then "timeout"
 ```
+
+</div>
 
 ### The code
 
@@ -434,19 +487,23 @@ Each friend has a notebook with **two sections**:
 
 The friend also keeps a little private counter per key (`issued`) so they never give two different writes the same name.
 
+<div align="center">
+
 ```
-   ┌──────────────────────── Node n1 ────────────────────────┐
-   │ data   : "cart:bob"   → [ {apples}  dot n1:4 ]           │
-   │          "cart:carl"  → [ {tea} , {coffee} ]  siblings   │
-   │ hints  : for n4 → "cart:alice" → [ {eggs,milk} ]         │
-   │ issued : "cart:bob" → 4, "cart:alice" → 1                │
-   │                                                          │
-   │ handle(msg):  putReq / getReq     → touch my notebook    │
-   │               coordPutReq/GetReq  → act as coordinator   │
-   │               syncReq             → anti-entropy         │
-   │ background:   every 5 ms try to deliver sticky notes     │
-   └──────────────────────────────────────────────────────────┘
++------------------------- Node n1 --------------------------+
+| data   : "cart:bob"   -> [ {apples}  dot n1:4 ]            |
+|          "cart:carl"  -> [ {tea} , {coffee} ]  siblings    |
+| hints  : for n4 -> "cart:alice" -> [ {eggs,milk} ]         |
+| issued : "cart:bob" -> 4, "cart:alice" -> 1                |
+|                                                            |
+| handle(msg):  putReq / getReq     -> touch my notebook     |
+|               coordPutReq/GetReq  -> act as coordinator    |
+|               syncReq             -> anti-entropy          |
+| background:   every 5 ms try to deliver sticky notes       |
++------------------------------------------------------------+
 ```
+
+</div>
 
 ### The code
 
@@ -465,16 +522,20 @@ Any node becomes "the coordinator" for a request just by receiving it from a cli
 
 #### Job 1: decide who to contact (`targets`)
 
-```
-   Walk("cart:alice") = [ n2  n5  n4 | n1  n3 ]
-                          home (N=3)   fallbacks
+<div align="center">
 
-   STRICT quorum:  always [n2, n5, n4]. If n4 is cut off, that reply just fails.
-
-   SLOPPY quorum, n4 unreachable:
-                   [n2, n5, n1 (hint: "for n4")]
-                    n1 stands in for n4 and holds the write as a sticky note
 ```
+Walk("cart:alice") = [ n2  n5  n4 | n1  n3 ]                                 
+                       home (N=3)   fallbacks                                
+                                                                             
+STRICT quorum:  always [n2, n5, n4]. If n4 is cut off, that reply just fails.
+                                                                             
+SLOPPY quorum, n4 unreachable:                                               
+                [n2, n5, n1 (hint: "for n4")]                                
+                 n1 stands in for n4 and holds the write as a sticky note    
+```
+
+</div>
 
 Each fallback is used at most once, in ring order. If there's no live fallback left, the home node stays in the list and its reply simply fails. The list always has exactly N entries.
 
@@ -501,20 +562,24 @@ A failed write (fewer than W acks) is **not undone**. The coordinator already sa
 
 Copies drift apart because of slow replicas, partitions and sloppy writes. Three helpers bring them back together. Because `merge` doesn't care about order or repeats, all three can send data without fear of breaking anything.
 
+<div align="center">
+
 ```
-   ┌────────────────┬────────────────────────────┬─────────────────────────────┐
-   │ Helper         │ When it runs               │ What it fixes               │
-   ├────────────────┼────────────────────────────┼─────────────────────────────┤
-   │ Read repair    │ after every read           │ replicas that answered the  │
-   │                │ (coordinator.go)           │ read with old data          │
-   ├────────────────┼────────────────────────────┼─────────────────────────────┤
-   │ Hinted handoff │ every 5 ms on each node    │ writes a stand-in is        │
-   │                │ (repair.go)                │ holding for a missing owner │
-   ├────────────────┼────────────────────────────┼─────────────────────────────┤
-   │ Anti-entropy   │ when Cluster.AntiEntropy() │ anything else: keys nobody  │
-   │                │ is called (repair.go)      │ has read recently           │
-   └────────────────┴────────────────────────────┴─────────────────────────────┘
++----------------+----------------------------+-----------------------------+
+| Helper         | When it runs               | What it fixes               |
++----------------+----------------------------+-----------------------------+
+| Read repair    | after every read           | replicas that answered the  |
+|                | (coordinator.go)           | read with old data          |
++----------------+----------------------------+-----------------------------+
+| Hinted handoff | every 5 ms on each node    | writes a stand-in is        |
+|                | (repair.go)                | holding for a missing owner |
++----------------+----------------------------+-----------------------------+
+| Anti-entropy   | when Cluster.AntiEntropy() | anything else: keys nobody  |
+|                | is called (repair.go)      | has read recently           |
++----------------+----------------------------+-----------------------------+
 ```
+
+</div>
 
 ### Read repair
 
@@ -522,13 +587,17 @@ After a read, the coordinator has every reply. For each replica, it computes wha
 
 ### Hinted handoff
 
+<div align="center">
+
 ```
-   during the partition                    after healing
-   ┌────┐  sticky note:                    ┌────┐  putReq {eggs,milk}   ┌────┐
-   │ n1 │  "cart:alice for n4"   ──────▶   │ n1 │ ────────────────────▶ │ n4 │
-   └────┘                                  └────┘ ◀──── ack ─────────── └────┘
-                                           n1 removes the note (only the versions it sent)
+during the partition                    after healing                                  
++----+  sticky note:                    +----+  putReq {eggs,milk}   +----+            
+| n1 |  "cart:alice for n4"   ------>   | n1 | --------------------> | n4 |            
++----+                                  +----+ <---- ack ----------- +----+            
+                                        n1 removes the note (only the versions it sent)
 ```
+
+</div>
 
 Every 5 ms, each node looks at its sticky notes, picks the owners that are reachable again, sends them their writes, and removes a note **only after the owner acknowledged it**. If a newer note for the same key arrived meanwhile, that one stays for the next round.
 
@@ -549,17 +618,21 @@ This is what an application uses. A `Client` has `R`, `W`, `Sloppy` and `Timeout
 * `Put(key, value, ctx)`: pass the `Context` from your last `Get` (or `nil` for a first, blind write). The new version replaces exactly the versions that context covers.
 * `GetResolved(key, resolve)`: read; if there are siblings, merge their values with `resolve` and write the result back with the merged context. That single write replaces all siblings at once, so they collapse into one.
 
+<div align="center">
+
 ```
-   Get  ──▶ siblings: {eggs,milk} [n2:1 n5:1]   {bread,milk} [n4:1 n5:1]
-            context:  [n2:1 n4:1 n5:1]
-            │
-   resolve  ▼  UnionResolver → "bread,eggs,milk"
-            │
-   Put("bread,eggs,milk", context [n2:1 n4:1 n5:1])
-            │   new version's context contains both dots n2:1 and n4:1
-            ▼
-   every replica: [ {bread,eggs,milk} ]   one version again ✔
+Get  --> siblings: {eggs,milk} [n2:1 n5:1]   {bread,milk} [n4:1 n5:1]
+         context:  [n2:1 n4:1 n5:1]                                  
+         |                                                           
+resolve  v  UnionResolver -> "bread,eggs,milk"                       
+         |                                                           
+Put("bread,eggs,milk", context [n2:1 n4:1 n5:1])                     
+         |   new version's context contains both dots n2:1 and n4:1  
+         v                                                           
+every replica: [ {bread,eggs,milk} ]   one version again             
 ```
+
+</div>
 
 ### 12.2 The resolver (`store/resolver.go`)
 
@@ -595,43 +668,63 @@ This is what an application uses. A `Client` has `R`, `W`, `Sloppy` and `Timeout
 
 **Step 1. Everyone agrees.** A first write `{milk}` reaches all three replicas. Its dot is `n5:1`.
 
+<div align="center">
+
 ```
-   n2: {milk}      n5: {milk}      n4: {milk}          all hold dot n5:1
+n2: {milk}      n5: {milk}      n4: {milk}          all hold dot n5:1
 ```
+
+</div>
 
 Both clients read it, so both have context `[n5:1]`.
 
 **Step 2. The wall goes up.**
 
+<div align="center">
+
 ```
-   side A: n2, n1, clientA     ║     side B: n5, n4, n3, clientB
+side A: n2, n1, clientA     #     side B: n5, n4, n3, clientB
 ```
+
+</div>
 
 **Step 3. Both sides write.**
 
 * Client A adds eggs through n2. New version: value `{eggs,milk}`, dot `n2:1`, context `[n5:1]`. With W = 1, n2's own save is enough: **ok**.
 * Client B adds bread through n4. New version: value `{bread,milk}`, dot `n4:1`, context `[n5:1]`. **ok**.
 
+<div align="center">
+
 ```
-   n2: {eggs,milk}             ║     n5: {bread,milk}   n4: {bread,milk}
+n2: {eggs,milk}             #     n5: {bread,milk}   n4: {bread,milk}
 ```
+
+</div>
 
 **Step 4. The wall comes down; repair runs.** Hinted handoff drains, then one anti-entropy round. Now each replica receives the other side's version and merges it. Neither version's context contains the other's dot, so they're **siblings**:
 
+<div align="center">
+
 ```
-   every replica: [ {eggs,milk} clock [n2:1 n5:1] ,  {bread,milk} clock [n4:1 n5:1] ]
+every replica: [ {eggs,milk} clock [n2:1 n5:1] ,  {bread,milk} clock [n4:1 n5:1] ]
 ```
+
+</div>
 
 **Step 5. Read with R = 3 and reconcile.** The client gets 2 siblings, merges them with `UnionResolver` into `{bread,eggs,milk}`, and writes that back with the merged context `[n2:1 n4:1 n5:1]`. The coordinator was n4, so the new dot is `n4:2`.
 
 **Step 6. Check.**
 
+<div align="center">
+
 ```
-   replica n2 holds {bread,eggs,milk} [n2:1 n4:2 n5:1]
-   replica n5 holds {bread,eggs,milk} [n2:1 n4:2 n5:1]
-   replica n4 holds {bread,eggs,milk} [n2:1 n4:2 n5:1]
-   converged, and every acknowledged item (milk, eggs, bread) is still there ✔
+replica n2 holds {bread,eggs,milk} [n2:1 n4:2 n5:1]                      
+replica n5 holds {bread,eggs,milk} [n2:1 n4:2 n5:1]                      
+replica n4 holds {bread,eggs,milk} [n2:1 n4:2 n5:1]                      
+converged, and every acknowledged item (milk, eggs, bread) is still there
 ```
+
+</div>
 
 ### The same story with other settings
 
@@ -644,7 +737,412 @@ Both clients read it, so both have context `[n5:1]`.
 
 ---
 
-## 14. The programs in `cmd/` and what they prove
+## 14. Under the hood: how each component is implemented
+
+Sections 5 to 12 explained **what** each component does. This section shows **how** it is built in Go: the data it keeps, the steps of its main function, how it stays safe when many goroutines use it at once, and the real code for the important parts. The order is the same as before, so each part only uses parts already covered. For the exact contents of every message, see [MESSAGES_EXPLAINED.md](MESSAGES_EXPLAINED.md).
+
+### 14.1 Vector clocks (`vclock/vclock.go`, 195 lines)
+
+**Data.** A clock is a Go map. A missing entry means zero.
+
+```go
+type VC map[string]uint64          // node id -> counter
+```
+
+**Safety.** No function changes its input. `Increment` and `Merge` build a new map, so a clock stored inside a version can be shared freely as long as nobody writes to it.
+
+**Compare in one pass.** It walks both maps once and remembers two flags: "a is behind somewhere" and "b is behind somewhere". The four combinations of the two flags are the four answers:
+
+```go
+aLess, bLess := false, false
+for k, an := range a {
+    bn := b[k]
+    if an < bn { aLess = true } else if an > bn { bLess = true }
+}
+for k, bn := range b {             // entries only b has are zero in a
+    if _, ok := a[k]; !ok && bn > 0 { aLess = true }
+}
+switch {
+case !aLess && !bLess: return Equal
+case aLess && !bLess:  return Before
+case !aLess && bLess:  return After
+default:               return Concurrent
+}
+```
+
+<div align="center">
+
+```
+                  bLess = false        bLess = true   
+               +------------------+------------------+
+aLess = false  |      Equal       |  After (a newer) |
+               +------------------+------------------+
+aLess = true   | Before (b newer) |    Concurrent    |
+               +------------------+------------------+
+```
+
+</div>
+
+**Stable printing.** `String()` sorts the node ids first, because Go visits map entries in random order and logs would otherwise change from run to run.
+
+### 14.2 Versions and dots (`store/version.go`, 106 lines)
+
+**Data.** Two small structs (shown in section 6) and two enums, `Policy` and `ClockMode`, each a plain `int` with named constants.
+
+**The two key methods are one line each:**
+
+```go
+// Clock: the context with this write's own dot added.
+func (v Version) Clock() vclock.VC {
+    c := v.Ctx.Copy()
+    if c[v.Dot.Node] < v.Dot.Counter { c[v.Dot.Node] = v.Dot.Counter }
+    return c
+}
+
+// Covers: v is w, or v's writer had seen w's dot.
+func (v Version) Covers(w Version) bool {
+    return v.Dot == w.Dot || v.Ctx[w.Dot.Node] >= w.Dot.Counter
+}
+```
+
+`Covers` is the whole idea of dotted version vectors: to decide if A replaces B, look up **one** number in A's context and compare it with B's counter.
+
+### 14.3 Merge rules (`store/merge.go`, 182 lines)
+
+**Data.** A tiny struct that bundles the two settings, so every caller applies the same rules:
+
+```go
+type rules struct {
+    policy Policy
+    clocks ClockMode
+}
+```
+
+**The merge loop.** For each incoming version, compare it with every version already in the pile. Build the result in a fresh slice so the loop never overwrites what it is still reading.
+
+```go
+for _, v := range incoming {
+    if r.policy == LastWriterWins {                // keep one winner only
+        if len(set) == 0 || r.lwwBeats(v, set[0]) { set = []Version{v} }
+        continue
+    }
+    dominated := false
+    kept := set[:0:0]                              // empty slice, new backing array
+    for _, e := range set {
+        switch {
+        case r.same(e, v) || r.obsoletes(e, v):   // v is old news
+            dominated = true
+            kept = append(kept, e)
+        case r.obsoletes(v, e):                    // e is replaced: drop it
+        default:                                   // concurrent: keep both
+            kept = append(kept, e)
+        }
+    }
+    if !dominated { kept = append(kept, v) }
+    set = kept
+}
+sortVersions(set)                                  // same order on every replica
+```
+
+<div align="center">
+
+```
+pile before        incoming           decision                 pile after
+-----------        --------           --------                 ----------
+[A]                A again            same            -> drop  [A]       
+[A]                B (covers A)       B obsoletes A   -> swap  [B]       
+[B]                A (B covers A)     B obsoletes A   -> drop  [B]       
+[A]                C (concurrent)     neither covers  -> keep  [A, C]    
+```
+
+</div>
+
+**Cost.** Each incoming version is compared with each pile entry, so merging is `pile size x incoming`. Piles are small (one version normally, a handful of siblings at worst), so this is fast.
+
+**LWW tie-break.** `lwwBeats` checks, in order: same write (no), causally older (no), causally newer (yes), higher timestamp, and finally higher node id. The last step only has to be the same on every replica, so they all pick the same winner.
+
+### 14.4 The ring (`store/ring.go`, 116 lines)
+
+**Data.**
+
+```go
+type Ring struct {
+    tokens []uint64            // every flag position, sorted
+    owner  map[uint64]string   // flag position -> node
+    nodes  []string            // the physical nodes
+    hash   func(string) uint64 // MD5, first 8 bytes
+}
+```
+
+**Building it.** For every node and every `i` from 0 to 63, hash the string `"n3#17"` (for example) to get a flag position. Then sort all 320 positions.
+
+**Walking it.** Binary-search for the first flag at or after the key's hash, then step forward (wrapping round with `%`), skipping nodes already listed:
+
+```go
+h := r.hash(key)
+i := sort.Search(len(r.tokens), func(i int) bool { return r.tokens[i] >= h })
+seen := map[string]bool{}
+for j := 0; j < len(r.tokens) && len(out) < len(r.nodes); j++ {
+    n := r.owner[r.tokens[(i+j)%len(r.tokens)]]
+    if !seen[n] { seen[n] = true; out = append(out, n) }
+}
+```
+
+<div align="center">
+
+```
+sorted flags:  ... [n5#3] [n2#40] [n2#7] [n5#11] [n4#2] [n1#9] ...            
+                      ^                                                       
+           key hash lands here, walk right:                                   
+           n2 (keep), n2 (skip, seen), n5 (keep), n5 (skip), n4 (keep), n1 ...
+```
+
+</div>
+
+**Cost.** Finding the start is a binary search, about 9 steps for 320 flags. **Safety.** The ring is never changed after it is built, so it needs no lock.
+
+### 14.5 The network (`store/network.go`, 248 lines)
+
+**Data.**
+
+```go
+type Network struct {
+    mu       sync.RWMutex
+    handlers map[string]Handler       // endpoint -> its handle function (nil for clients)
+    group    map[string]int           // endpoint -> which side of the wall
+    latency  LatencyModel             // node-to-node delays
+    clientLt LatencyModel             // delays for hops touching a client
+    isClient map[string]bool
+    extra    map[string]time.Duration // per-node slowdown
+    rngMu    sync.Mutex               // the random generator has its own lock
+    rng      *rand.Rand               // seeded, so runs repeat
+}
+```
+
+**Partitions are just numbers.** Every endpoint has a group number. Two endpoints can talk if their numbers are equal. `Partition(groups...)` resets everyone to group 0 and then gives the listed groups numbers 1, 2 and so on.
+
+**Sampling a delay.**
+
+```go
+d := l.Base + time.Duration(n.rng.ExpFloat64()*float64(l.JitterMean))
+if l.SlowProb > 0 && n.rng.Float64() < l.SlowProb { d += l.SlowExtra }
+```
+
+An exponential jitter gives many quick messages and a few slow ones, like a real network.
+
+**Sending.** Each `Send` starts one goroutine that sleeps, checks the wall, calls the receiver's handler, sleeps again, checks the wall again, and puts the reply in a channel with room for one value. The caller waits on that channel **or** on its deadline, whichever comes first:
+
+```go
+out := make(chan any, 1)          // room for one reply, so the goroutine never blocks
+go func() {
+    time.Sleep(n.delay(lat) + slow)
+    if !sameGroup || h == nil { return }      // request dropped
+    resp := h(from, req)
+    time.Sleep(n.delay(lat) + slow)
+    if !n.Reachable(to, from) { return }      // reply dropped
+    out <- resp
+}()
+select {
+case r := <-out:   return r, nil
+case <-ctx.Done(): return nil, ErrTimeout
+}
+```
+
+**Safety.** A read-write lock guards the maps (many readers, few writers), and the random generator has its own lock because Go's `rand.Rand` is not safe to share.
+
+### 14.6 The node (`store/node.go`, 234 lines)
+
+**Data.**
+
+```go
+type Node struct {
+    ID   string
+    cfg  NodeConfig
+    net  *Network
+    ring *Ring
+
+    mu     sync.Mutex
+    data   map[string][]Version            // key -> sibling pile (keys I own)
+    hints  map[string]map[string][]Version // owner -> key -> pile (sticky notes)
+    issued map[string]uint64               // key -> highest counter I've issued
+
+    stop chan struct{}  // closed to stop the background loop
+    wg   sync.WaitGroup // lets Close wait for the loop to finish
+
+    coordinated atomic.Int64 // how many client requests I coordinated
+}
+```
+
+**The background loop.** `start()` launches one goroutine with a ticker. Every 5 ms it calls `handoffHints()`, until `stop` is closed:
+
+```go
+t := time.NewTicker(nd.cfg.HandoffInterval)
+for {
+    select {
+    case <-nd.stop: return
+    case <-t.C:     nd.handoffHints()
+    }
+}
+```
+
+**The locking rule.** One mutex guards `data`, `hints` and `issued`. It is only held for quick in-memory work and **never** while sending a message. If a node held its lock while waiting for another node, and that node was waiting for it, both would freeze forever. Not holding it while sending rules that out.
+
+**Copies at the border.** Versions coming in from a message are cloned (`cloneVersions`) before being stored, and versions going out are cloned before the lock is released. That way no two goroutines ever share the same map.
+
+### 14.7 The coordinator (`store/coordinator.go`, 278 lines)
+
+**Choosing targets (`targets`).** Take the ring walk. The first N are home replicas. For a strict quorum, use them as they are. For a sloppy quorum, replace each unreachable home replica with the next reachable stand-in, each stand-in used once:
+
+```go
+fallback := walk[n:]
+fi := 0
+for _, p := range pref {
+    if nd.net.Reachable(nd.ID, p) { out = append(out, target{node: p}); continue }
+    for fi < len(fallback) && !nd.net.Reachable(nd.ID, fallback[fi]) { fi++ }
+    if fi < len(fallback) {
+        out = append(out, target{node: fallback[fi], hint: p}); fi++
+    } else {
+        out = append(out, target{node: p})   // no stand-in left: will just fail
+    }
+}
+```
+
+**Writing (`coordPut`), step by step:**
+
+<div align="center">
+
+```
++-------------------- hold nd.mu ----------------------+  
+| 1. floor = max(issued[key], ctx[me], every stored    |  
+|             version's clock[me])                     |  
+| 2. dot   = (me, floor+1);  issued[key] = floor+1     |  
+| 3. build Version{value, dot, ctx, now+skew, me}      |  
+| 4. merge into data[key]  (or hints, if not a home)   |  
+| 5. snapshot = clone of my whole pile for key         |  
++------------------- release nd.mu ---------------------+ 
+6. one goroutine per other target:  Send(putReq{snapshot})
+7. read the acks channel until W ok, or all answered      
+8. reply coordPutResp; stragglers keep going until 20 ms  
+```
+
+</div>
+
+Steps 1 and 2 are why a counter is never reused. Step 5 is the "send the whole pile" decision from section 10.
+
+**Reading (`coordGet`).** Same fan-out shape, with a channel of replies instead of acks. After R good replies it answers. The **same** channel is then drained by a background goroutine, which finishes the merge and sends read repair:
+
+```go
+go func() {
+    for ; done < len(ts); done++ {           // collect the late replies
+        rp := <-replies
+        if rp.err == nil { got = append(got, rp); merged = nd.rules().merge(merged, rp.vs...) }
+    }
+    if !nd.cfg.ReadRepair { return }
+    for _, rp := range got {                 // repair each replica with only what it lacks
+        var missing []Version
+        for _, v := range merged {
+            if !nd.rules().covers(rp.vs, v) { missing = append(missing, v) }
+        }
+        if len(missing) > 0 {
+            go nd.net.Send(rctx, nd.ID, rp.t.node, putReq{Key: r.Key, V: missing, Hint: rp.t.hint})
+        }
+    }
+    <-rctx.Done()
+}()
+```
+
+The answer to the client is cloned before this goroutine starts, because the goroutine keeps changing `merged`.
+
+### 14.8 Repair (`store/repair.go`, 150 lines)
+
+**Hinted handoff (`handoffHints`).**
+
+<div align="center">
+
+```
+1. lock:   copy the sticky notes for every owner that looks reachable
+2. unlock                                                            
+3. for each owner: send one putReq per key (no hint), 20 ms deadline 
+4. if EVERY key for that owner was acknowledged:                     
+     lock: remove only the versions that were sent                   
+           (a newer note that arrived meanwhile stays)               
+     unlock                                                          
+   otherwise keep them all and try again in 5 ms                     
+```
+
+</div>
+
+Resending a note that was already delivered is harmless, because merging the same version twice changes nothing.
+
+**Anti-entropy (`syncWith` / `handleSync`).**
+
+```go
+// starter
+resp, err := nd.net.Send(ctx, nd.ID, peer, syncReq{Items: nd.itemsFor(peer)})
+if err != nil { return err }
+nd.absorb(resp.(syncResp).Items)
+
+// receiver
+func (nd *Node) handleSync(from string, r syncReq) syncResp {
+    nd.absorb(r.Items)                           // learn first...
+    return syncResp{Items: nd.itemsFor(from)}    // ...so the reply already includes it
+}
+```
+
+`itemsFor(peer)` loops over every owned key and keeps those whose preference list includes `peer`. That is a full scan; real Dynamo uses Merkle trees to find only the differences, which matters at millions of keys but not here.
+
+`Cluster.AntiEntropy` runs the pairs one after another (not in parallel), which keeps the result easy to reason about in tests.
+
+### 14.9 The client and the resolver (`store/client.go` 207 lines, `store/resolver.go` 62 lines)
+
+**Data.** The client holds only its settings plus pointers to the shared network and ring. It keeps nothing between requests, so one client can be used from many goroutines.
+
+**Picking a coordinator.**
+
+<div align="center">
+
+```
+live = home replicas I can reach                                                      
+if FirstCoordinator and live is not empty -> live[0]                                  
+if live is not empty                      -> random pick from live                    
+if Sloppy                                 -> first reachable node on the ring walk    
+otherwise                                 -> ErrUnavailable "no reachable coordinator"
+```
+
+</div>
+
+**Building the context.** After a `Get`, merge the clock of every returned version:
+
+```go
+res := GetResult{Versions: r.Versions, Context: vclock.New()}
+for _, v := range r.Versions {
+    res.Context = vclock.Merge(res.Context, v.Clock())
+}
+```
+
+**`UnionResolver`.** Split every sibling on commas, put the items in a set, sort, and join. Sorting makes the answer the same no matter what order the siblings came in.
+
+### 14.10 The cluster (`store/cluster.go`, 193 lines)
+
+**Building.** `NewCluster` names the nodes `n1`..`n5`, builds one ring, one network (seeded) and one node per name, registers each node's `handle` on the network, and starts each node's background loop.
+
+**Waiting for hints.** `WaitHintsDrained` checks every millisecond whether the total `HintCount()` across nodes is zero, up to a deadline.
+
+**Shutting down.** `Close` closes every node's `stop` channel and waits on its `WaitGroup`, so no background loop is left running.
+
+### 14.11 How it is tested
+
+| Test file | What it checks |
+|---|---|
+| `vclock/vclock_test.go` | `Compare` gives the right order, and `Increment` respects its floor |
+| `store/store_test.go` | Merge drops replaced versions; two concurrent writes through one coordinator stay siblings; a strict quorum reads its own write; a strict quorum refuses on the minority side; every partition scenario keeps its declared rule |
+| `store/concurrency_test.go` | Many clients writing the same key at once lose no acknowledged items |
+
+Run them with `go test -race ./...`. The `-race` flag makes Go watch for two goroutines touching the same memory without a lock, which is how the locking rules above are checked.
+
+---
+
+## 15. The programs in `cmd/` and what they prove
 
 | Command | What it runs | Output file |
 |---|---|---|
@@ -663,7 +1161,7 @@ Headline numbers (from `REPORT.md`):
 
 ---
 
-## 15. Glossary
+## 16. Glossary
 
 | Word | Meaning |
 |---|---|
@@ -696,4 +1194,4 @@ Headline numbers (from `REPORT.md`):
 
 ---
 
-For the detailed design decisions and every experiment's evidence, see [ARCHITECTURE.md](../ARCHITECTURE.md) and [REPORT.md](../REPORT.md).
+For every message the components exchange, with full real examples, see [MESSAGES_EXPLAINED.md](MESSAGES_EXPLAINED.md). For the detailed design decisions and every experiment's evidence, see [ARCHITECTURE.md](../ARCHITECTURE.md) and [REPORT.md](../REPORT.md).
