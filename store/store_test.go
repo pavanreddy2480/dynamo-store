@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -102,5 +103,29 @@ func TestPartitionScenarios(t *testing.T) {
 		if o.Policy == LastWriterWins && r.AckedKept {
 			t.Errorf("%+v: expected LWW to drop one acknowledged write", o)
 		}
+	}
+}
+
+// Hinted handoff must deliver any number of hints to a recovered owner. The
+// old loop shared one 20ms deadline across every key of an owner, so with
+// enough hinted keys the later sends always timed out and the hints were
+// never pruned.
+func TestHandoffDeliversManyHints(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Node.HandoffInterval = 5 * time.Millisecond
+	c := NewCluster(cfg)
+	defer c.Close()
+	holder := c.Nodes["n5"]
+	holder.mu.Lock()
+	holder.hints["n1"] = map[string][]Version{}
+	for i := 0; i < 150; i++ {
+		holder.hints["n1"][fmt.Sprintf("k%d", i)] = []Version{{Value: "v", Dot: Dot{"n5", uint64(i + 1)}, Origin: "n5"}}
+	}
+	holder.mu.Unlock()
+	if !c.WaitHintsDrained(5 * time.Second) {
+		t.Fatalf("%d hints still undelivered after 5s", holder.HintCount())
+	}
+	if got := c.Nodes["n1"].Snapshot("k149"); len(got) != 1 {
+		t.Fatalf("owner did not receive the hint: %v", got)
 	}
 }

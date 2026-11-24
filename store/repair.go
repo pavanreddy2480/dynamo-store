@@ -31,40 +31,45 @@ func (nd *Node) handoffHints() {
 	}
 	nd.mu.Unlock()
 	for owner, m := range pending {
-		ctx, cancel := context.WithTimeout(context.Background(), nd.cfg.ReplicaTimeout)
-		allOK := true
+		// Each send gets its own ReplicaTimeout. A deadline shared by all of
+		// an owner's keys made every round fail once an owner had more hints
+		// than fit in one timeout, so nothing was ever delivered for good.
+		// The first failure ends this owner's round: it is probably still
+		// unreachable, and the keys delivered so far are pruned below.
+		delivered := map[string][]Version{}
 		for k, vs := range m {
-			if _, err := nd.net.Send(ctx, nd.ID, owner, putReq{Key: k, V: vs}); err != nil {
-				allOK = false
+			ctx, cancel := context.WithTimeout(context.Background(), nd.cfg.ReplicaTimeout)
+			_, err := nd.net.Send(ctx, nd.ID, owner, putReq{Key: k, V: vs})
+			cancel()
+			if err != nil {
+				break
 			}
+			delivered[k] = vs
 		}
-		cancel()
-		// Prune only when the owner acknowledged every key. A partial
-		// failure keeps all of this owner's hints; resending the delivered
-		// ones next round is harmless because merge is idempotent.
-		if allOK {
-			nd.mu.Lock()
-			for k, vs := range m {
-				// drop only what was delivered; newer hints may have arrived
-				if cur, ok := nd.hints[owner][k]; ok {
-					rest := cur[:0:0]
-					for _, c := range cur {
-						if !nd.rules().covers(vs, c) {
-							rest = append(rest, c)
-						}
-					}
-					if len(rest) == 0 {
-						delete(nd.hints[owner], k)
-					} else {
-						nd.hints[owner][k] = rest
+		// Drop only what was delivered; newer hints for the same key that
+		// arrived meanwhile stay for the next round. Resending a delivered
+		// key after a partial failure is harmless because merge is
+		// idempotent.
+		nd.mu.Lock()
+		for k, vs := range delivered {
+			if cur, ok := nd.hints[owner][k]; ok {
+				rest := cur[:0:0]
+				for _, c := range cur {
+					if !nd.rules().covers(vs, c) {
+						rest = append(rest, c)
 					}
 				}
+				if len(rest) == 0 {
+					delete(nd.hints[owner], k)
+				} else {
+					nd.hints[owner][k] = rest
+				}
 			}
-			if len(nd.hints[owner]) == 0 {
-				delete(nd.hints, owner)
-			}
-			nd.mu.Unlock()
 		}
+		if len(nd.hints[owner]) == 0 {
+			delete(nd.hints, owner)
+		}
+		nd.mu.Unlock()
 	}
 }
 
