@@ -114,3 +114,87 @@ func (r *Ring) PreferenceList(key string, n int) []string {
 	}
 	return w[:n]
 }
+
+// NewFixedRing divides the hash space into q equal partitions and deals
+// them to the nodes in turn (Dynamo's "strategy 3": Q fixed pieces, about
+// Q/N per node). Partition i starts at i*2^64/q and belongs to nodes[i%N],
+// so neighbouring partitions have different owners and the usual clockwise
+// walk finds distinct replicas quickly.
+//
+// Parameters:
+//   - nodes: the physical node ids.
+//   - q: the number of partitions; at least len(nodes).
+//
+// Returns:
+//   - *Ring: the constructed ring; its partition boundaries never move.
+func NewFixedRing(nodes []string, q int) *Ring {
+	r := &Ring{owner: map[uint64]string{}, nodes: append([]string(nil), nodes...), hash: hash64}
+	for i := 0; i < q; i++ {
+		t := uint64(i) * (^uint64(0)/uint64(q) + 1)
+		r.tokens = append(r.tokens, t)
+		r.owner[t] = nodes[i%len(nodes)]
+	}
+	return r
+}
+
+// WithNode returns a copy of a fixed ring after node id joins: it takes its
+// fair share (q/N') of the partitions, evenly spaced around the ring. Only
+// those partitions change owner.
+//
+// Parameters:
+//   - id: the joining node.
+//
+// Returns:
+//   - *Ring: the new ring; the receiver is unchanged.
+func (r *Ring) WithNode(id string) *Ring {
+	n := &Ring{owner: map[uint64]string{}, tokens: r.tokens, nodes: append(append([]string(nil), r.nodes...), id), hash: r.hash}
+	count := map[string]int{}
+	for t, o := range r.owner {
+		n.owner[t] = o
+		count[o]++
+	}
+	// Take evenly spaced partitions: spacing them out keeps the new node's
+	// pieces apart, so its load is spread like the other nodes'. Donors
+	// lose partitions in proportion to how many they own.
+	want := len(r.tokens) / len(n.nodes)
+	for j := 0; j < want; j++ {
+		n.owner[n.tokens[j*len(n.tokens)/want]] = id
+	}
+	return n
+}
+
+// WithoutNode returns a copy of a fixed ring after node id leaves: each of
+// its partitions goes to whichever remaining node holds the fewest.
+//
+// Parameters:
+//   - id: the leaving node.
+//
+// Returns:
+//   - *Ring: the new ring; the receiver is unchanged.
+func (r *Ring) WithoutNode(id string) *Ring {
+	n := &Ring{owner: map[uint64]string{}, tokens: r.tokens, hash: r.hash}
+	count := map[string]int{}
+	for _, o := range r.nodes {
+		if o != id {
+			n.nodes = append(n.nodes, o)
+		}
+	}
+	for t, o := range r.owner {
+		n.owner[t] = o
+		count[o]++
+	}
+	for _, t := range r.tokens {
+		if n.owner[t] != id {
+			continue
+		}
+		to := n.nodes[0]
+		for _, o := range n.nodes {
+			if count[o] < count[to] {
+				to = o
+			}
+		}
+		n.owner[t] = to
+		count[to]++
+	}
+	return n
+}

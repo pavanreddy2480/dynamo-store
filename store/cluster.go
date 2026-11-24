@@ -14,12 +14,15 @@ import (
 //
 // Start from DefaultConfig and override the fields an experiment needs.
 type Config struct {
-	Nodes   int          // number of physical nodes, named n1..nNodes
-	VNodes  int          // virtual nodes (ring tokens) per physical node
-	Node    NodeConfig   // settings shared by every replica
-	Latency LatencyModel // replica-to-replica message delay
-	Client  LatencyModel // delay of hops that start or end at a client
-	Seed    int64        // seeds the network's latency sampling
+	Nodes  int // number of physical nodes, named n1..nNodes
+	VNodes int // virtual nodes (ring tokens) per physical node
+	// Partitions, when positive, replaces the random virtual nodes with
+	// that many fixed equal partitions (NewFixedRing).
+	Partitions int
+	Node       NodeConfig   // settings shared by every replica
+	Latency    LatencyModel // replica-to-replica message delay
+	Client     LatencyModel // delay of hops that start or end at a client
+	Seed       int64        // seeds the network's latency sampling
 }
 
 // DefaultConfig is 5 nodes with 3 replicas per key.
@@ -75,9 +78,13 @@ func NewCluster(cfg Config) *Cluster {
 	for i := range ids {
 		ids[i] = fmt.Sprintf("n%d", i+1)
 	}
+	ring := NewRing(ids, cfg.VNodes)
+	if cfg.Partitions > 0 {
+		ring = NewFixedRing(ids, cfg.Partitions)
+	}
 	c := &Cluster{
 		Net:   NewNetwork(cfg.Latency, cfg.Client, cfg.Seed),
-		Ring:  NewRing(ids, cfg.VNodes),
+		Ring:  ring,
 		Nodes: map[string]*Node{},
 		IDs:   ids,
 		cfg:   cfg,
