@@ -35,9 +35,9 @@ MD5 ring, 5 nodes, N=3, 20000 keys, averaged over 20 placements (each placement 
 | 512 | 2560 | 0.025 | 4.1 | 6.9 | 20.0% | 20.9% | 261 | 2947 |
 | 1024 | 5120 | 0.016 | 2.6 | 4.5 | 20.2% | 20.6% | 284 | 6510 |
 
-![balance](a1b_balance.svg)
-![moved](a1b_moved.svg)
-![lookup](a1b_lookup.svg)
+![balance](charts/a1b_balance.svg)
+![moved](charts/a1b_moved.svg)
+![lookup](charts/a1b_lookup.svg)
 
 ## A2. What a coordinator replicates, and how versions are compared
 
@@ -97,8 +97,8 @@ How long a coordinator waits for replicas. Strict R=W=2, 64 keys, partition {n1,
 | Merkle (per partition) | 1% | 832 | 151.0 | 70 | 285ms | 0 |
 | Merkle (per partition) | 10% | 8240 | 1145.4 | 70 | 337ms | 0 |
 
-![keys sent](a6_keys_sent.svg)
-![bytes sent](a6_bytes_sent.svg)
+![keys sent](charts/a6_keys_sent.svg)
+![bytes sent](charts/a6_bytes_sent.svg)
 
 Depth of each partition's tree (leaves = 2^depth) at 1% and 10% divergence:
 
@@ -121,7 +121,7 @@ Depth of each partition's tree (leaves = 2^depth) at 1% and 10% divergence:
 | 6 | 10% | 8240 | 37964 | 1159.3 | 90 |
 | 8 | 10% | 8240 | 50467 | 1320.5 | 110 |
 
-![depth](a6_depth.svg)
+![depth](charts/a6_depth.svg)
 
 ## A8. Ring placement: equal spacing vs random vnodes vs fixed partitions
 
@@ -134,8 +134,8 @@ Depth of each partition's tree (leaves = 2^depth) at 1% and 10% divergence:
 | random vnodes, 64 per node (previous default) | 56.7% | 66.3% | 0.056 | 21.0% | 22.1% | 22.1% |
 | fixed partitions, Q=256 | 59.8% | 60.8% | 0.006 | 19.9% | 19.9% | 19.9% |
 
-![balance](a8_balance.svg)
-![moved](a8_moved.svg)
+![balance](charts/a8_balance.svg)
+![moved](charts/a8_moved.svg)
 
 ## A9. How many fixed partitions, and why not modulo hashing?
 
@@ -153,8 +153,8 @@ Depth of each partition's tree (leaves = 2^depth) at 1% and 10% divergence:
 | fixed, Q=4096 | 819.2 | 0.5 | 20.1% |
 | modulo hash | - | 0.2 | 40.0% |
 
-![balance](a9_q_balance.svg)
-![moved](a9_q_moved.svg)
+![balance](charts/a9_q_balance.svg)
+![moved](charts/a9_q_moved.svg)
 
 ## A10. Merkle walk: one level per round trip vs whole tree at once
 
@@ -175,5 +175,5 @@ A6's setup (20,000 keys, 256 partitions, one round over 10 node pairs). Level-by
 | 6 | 10% | level by level | 90 | 37964 | 1159.3 | 416ms |
 | 6 | 10% | one shot | 40 | 104100 | 1934.3 | 214ms |
 
-![round trips](a10_roundtrips.svg)
-![kb](a10_kb.svg)
+![round trips](charts/a10_roundtrips.svg)
+![kb](charts/a10_kb.svg)

@@ -41,6 +41,6 @@
 // answered with older data are sent the merged result) and anti-entropy
 // (Cluster.AntiEntropy, a full-state exchange between every reachable pair).
 //
-// See ARCHITECTURE_DECISIONS.md for the reasons behind each choice and the experiments
+// See docs/reference/ARCHITECTURE_DECISIONS.md for the reasons behind each choice and the experiments
 // that support them.
 package store

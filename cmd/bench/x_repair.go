@@ -150,7 +150,7 @@ func x3Periodic() {
 	chart.BarErr(chartPath("x3_converge.svg"), "X3 time to repair a healed partition by anti-entropy interval", "anti-entropy interval", "ms until all replicas agree", labels, []string{"time to converge"}, [][]float64{m}, [][]float64{lo}, [][]float64{hi}, false)
 	im, _, _ := column(idle)
 	chart.Bar(chartPath("x3_idle.svg"), "X3 idle cost of periodic anti-entropy (converged cluster)", "anti-entropy interval", "network messages per second", labels, []string{"messages/s"}, [][]float64{im}, false)
-	out("\n![converge](x3_converge.svg)\n![idle](x3_idle.svg)\n")
+	out("\n![converge](charts/x3_converge.svg)\n![idle](charts/x3_idle.svg)\n")
 }
 
 // mean returns the average of vs.
@@ -185,7 +185,7 @@ func x6Handoff() {
 	}
 	m, lo, hi := column(ss)
 	chart.BarErr(chartPath("x6_handoff.svg"), "X6 time to deliver hints after heal by handoff interval", "handoff interval", "ms until no hints remain", labels, []string{"drain time"}, [][]float64{m}, [][]float64{lo}, [][]float64{hi}, false)
-	out("\n![handoff](x6_handoff.svg)\n")
+	out("\n![handoff](charts/x6_handoff.svg)\n")
 }
 
 // x7ReadPath measures the traffic cost of read repair and of querying all N
@@ -241,7 +241,7 @@ func x7ReadPath() {
 	m3, l3, h3 := column(allN)
 	m4, l4, h4 := column(ronly)
 	chart.BarErr(chartPath("x7_fanout.svg"), "X7 read p99 latency: query all N replicas vs only R", "setting", "get p99 (ms)", fg, []string{"all N", "R only"}, [][]float64{m3, m4}, [][]float64{l3, l4}, [][]float64{h3, h4}, false)
-	out("\n![repair](x7_repair.svg)\n![fanout](x7_fanout.svg)\n")
+	out("\n![repair](charts/x7_repair.svg)\n![fanout](charts/x7_fanout.svg)\n")
 }
 
 // keep strings imported for helpers in sibling files

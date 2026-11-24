@@ -77,7 +77,7 @@ func x8Failure() {
 		}
 	}
 	chart.Bar(chartPath("x8_shapes.svg"), "X8 availability by partition shape (R=W=2)", "partition shape", "successful operations (%)", sg, []string{"strict", "sloppy"}, avail, false)
-	out("\n![suspicion](x8_suspicion.svg)\n![shapes](x8_shapes.svg)\n")
+	out("\n![suspicion](charts/x8_suspicion.svg)\n![shapes](charts/x8_shapes.svg)\n")
 }
 
 // measureAllNet runs w with a false-suspicion probability p on the failure

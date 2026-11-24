@@ -1,18 +1,18 @@
 # ARCHITECTURE DECISIONS (reference)
 
-> The beginner-friendly walkthrough is now [ARCHITECTURE.md](ARCHITECTURE.md), and every message is in [MESSAGES.md](MESSAGES.md). This file keeps the numbered decisions D1 to D15 and their evidence.
+> The beginner-friendly walkthrough is now [ARCHITECTURE.md](../guides/ARCHITECTURE.md), and every message is in [MESSAGES.md](../guides/MESSAGES.md). This file keeps the numbered decisions D1 to D15 and their evidence.
 
 This document describes how `dynamo-store` is built, why each design decision was made, and which test or experiment supports it. All numbers come from three commands:
 
 * `go test -race ./...` (unit and scenario tests)
-* `go run ./cmd/bench`, which writes [results/benchmark.md](results/benchmark.md) (experiments E1–E3)
-* `go run ./cmd/archbench`, which writes [results/architecture.md](results/architecture.md) (experiments A1–A5, added to back the decisions below)
+* `go run ./cmd/bench`, which writes [results/benchmark.md](../../results/benchmark.md) (experiments E1–E3)
+* `go run ./cmd/archbench`, which writes [results/architecture.md](../../results/architecture.md) (experiments A1–A5, added to back the decisions below)
 
 The system runs as a simulation inside one process, so absolute latencies depend on Go's timers and the machine. Compare the numbers to each other, not to a real deployment.
 
 ---
 
-> **Default ring changed.** The default is now 256 fixed equal partitions with one eager Merkle tree per partition (see [docs/MERKLE_EXPERIMENTS.md](docs/MERKLE_EXPERIMENTS.md) and [docs/FIXED_MERKLE.md](docs/FIXED_MERKLE.md)). `results/` was regenerated on it. Numbers quoted in the text below were measured on the earlier 64-random-vnode ring and differ slightly from the current tables (for example E1 stale reads at R=W=1 are now 25.9% rather than 21.5%, and strict R=W=2 minority availability is 40.6% rather than 28%); the conclusions are unchanged. Use `results/` for current numbers.
+> **Default ring changed.** The default is now 256 fixed equal partitions with one eager Merkle tree per partition (see [docs/MERKLE_EXPERIMENTS.md](../experiments/MERKLE_EXPERIMENTS.md) and [docs/FIXED_MERKLE.md](../experiments/FIXED_MERKLE.md)). `results/` was regenerated on it. Numbers quoted in the text below were measured on the earlier 64-random-vnode ring and differ slightly from the current tables (for example E1 stale reads at R=W=1 are now 25.9% rather than 21.5%, and strict R=W=2 minority availability is 40.6% rather than 28%); the conclusions are unchanged. Use `results/` for current numbers.
 
 ## Contents
 
@@ -256,7 +256,7 @@ Each decision lists what was chosen, the alternatives considered, why the choice
 
 ### D3. Consistent hashing with MD5; now 256 fixed partitions (was 64 random vnodes) **(new evidence)**
 
-* **Update.** The default ring is now `NewFixedRing(nodes, 256)` (A8, [docs/MERKLE_EXPERIMENTS.md](docs/MERKLE_EXPERIMENTS.md)): node shares 59.8–60.8% and 19.9% of copies moved on a join, against a 56.7–66.3% spread and 22.1% for 64 random vnodes. The A1 and A1b analysis below is the evidence for the earlier choice and for MD5.
+* **Update.** The default ring is now `NewFixedRing(nodes, 256)` (A8, [docs/MERKLE_EXPERIMENTS.md](../experiments/MERKLE_EXPERIMENTS.md)): node shares 59.8–60.8% and 19.9% of copies moved on a join, against a 56.7–66.3% spread and 22.1% for 64 random vnodes. The A1 and A1b analysis below is the evidence for the earlier choice and for MD5.
 
 * **Decision.** Hash keys and tokens with MD5 (as Dynamo does) and give each node 64 virtual nodes.
 * **Alternatives.** FNV-1a (faster, non-cryptographic); fewer or more vnodes; modulo hashing.
@@ -271,9 +271,9 @@ Each decision lists what was chosen, the alternatives considered, why the choice
   | **MD5** | **64** | **56.7% – 66.3%** | **1.17** |
   | MD5 | 256 | 57.8% – 62.4% | 1.08 |
 
-  **Ablation (A1b, [docs/VNODE_ABLATION.md](docs/VNODE_ABLATION.md)).** A1 was a coarse sweep on one placement. A1b sweeps 1 to 1024 vnodes over 20 placements: imbalance falls roughly as 1/√vnodes (spread 10.6 points at 64, 5.9 at 256), data moved on a join is about 20% at every count (only the worst case improves), and lookup cost stays under 1 µs. So 64 is defensible, not optimal; 128 to 256 would balance better at no measurable cost in the simulation.
+  **Ablation (A1b, [docs/VNODE_ABLATION.md](../experiments/VNODE_ABLATION.md)).** A1 was a coarse sweep on one placement. A1b sweeps 1 to 1024 vnodes over 20 placements: imbalance falls roughly as 1/√vnodes (spread 10.6 points at 64, 5.9 at 256), data moved on a join is about 20% at every count (only the worst case improves), and lookup cost stays under 1 µs. So 64 is defensible, not optimal; 128 to 256 would balance better at no measurable cost in the simulation.
 
-  **Ablation (A1b, [docs/VNODE_ABLATION.md](docs/VNODE_ABLATION.md)).** A1 was a coarse sweep on one placement. A1b sweeps 1 to 1024 vnodes over 20 placements: imbalance falls roughly as 1/√vnodes (spread 10.6 points at 64, 5.9 at 256), data moved on a join is about 20% at every count (only the worst case improves), and lookup cost stays under 1 µs. So 64 is defensible, not optimal; 128 to 256 would balance better at no measurable cost in the simulation.
+  **Ablation (A1b, [docs/VNODE_ABLATION.md](../experiments/VNODE_ABLATION.md)).** A1 was a coarse sweep on one placement. A1b sweeps 1 to 1024 vnodes over 20 placements: imbalance falls roughly as 1/√vnodes (spread 10.6 points at 64, 5.9 at 256), data moved on a join is about 20% at every count (only the worst case improves), and lookup cost stays under 1 µs. So 64 is defensible, not optimal; 128 to 256 would balance better at no measurable cost in the simulation.
 
   64 vnodes gets within about 10% of perfect balance. 256 is slightly better but makes each `Walk` longer. Modulo hashing was rejected without measurement, because adding a node remaps almost every key.
 
@@ -370,7 +370,7 @@ Each decision lists what was chosen, the alternatives considered, why the choice
 
 ### D13. Three repair mechanisms: hinted handoff, read repair, anti-entropy **(new evidence)**
 
-* **Decision.** All three run. Hinted handoff runs every 5ms. Read repair runs after every read. Anti-entropy now compares per-partition Merkle trees and exchanges only differing keys, and a background loop starts it every 100 ms against a random reachable peer (X3; see [ABLATION.md](ABLATION.md)). Earlier text on this branch said it was one full-state exchange "triggered after heal"; nothing triggered it then.
+* **Decision.** All three run. Hinted handoff runs every 5ms. Read repair runs after every read. Anti-entropy now compares per-partition Merkle trees and exchanges only differing keys, and a background loop starts it every 100 ms against a random reachable peer (X3; see [ABLATION.md](../guides/ABLATION.md)). Earlier text on this branch said it was one full-state exchange "triggered after heal"; nothing triggered it then.
 * **Alternatives.** Any one of them alone.
 * **Why.** Each covers a different gap. Hinted handoff moves writes from **fallback nodes** back to their owners, which neither of the others can do, since fallbacks aren't in any key's preference list. Read repair fixes only keys that get read. Anti-entropy fixes everything between preferred replicas, but costs a full exchange.
 * **Evidence.** A3: sloppy writes on both sides of a partition for 1s, then heal and apply only some mechanisms:

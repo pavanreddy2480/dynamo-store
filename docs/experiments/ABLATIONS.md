@@ -1,6 +1,6 @@
 # Ablations: closing the gaps in the decision audit
 
-Branch `ablations` (on top of `fixed-merkle`). Each experiment changes one design choice and measures it. Runs are repeated 3 times with different latency seeds and reported as mean (min-max). Regenerate with `go run ./cmd/bench -ablate` (X1 to X8, writes `results/ablations.md`) and `go run ./cmd/archbench` (A9, A10). Every chart is in `results/` and listed in [GRAPHS.md](GRAPHS.md). This answers [DECISIONS_AUDIT.md](DECISIONS_AUDIT.md).
+Branch `ablations` (on top of `fixed-merkle`). Each experiment changes one design choice and measures it. Runs are repeated 3 times with different latency seeds and reported as mean (min-max). Regenerate with `go run ./cmd/bench -ablate` (X1 to X8, writes `results/ablations.md`) and `go run ./cmd/archbench` (A9, A10). Every chart is in `results/` and listed in [GRAPHS.md](GRAPHS.md). This answers [DECISIONS_AUDIT.md](../reference/DECISIONS_AUDIT.md).
 
 ## Headline: the ablations found a real bug
 
@@ -23,7 +23,7 @@ Earlier results that depended on hints draining (A3's "hinted handoff only" row,
 | A9 | How many fixed partitions Q, and why not modulo? | Spread (max-min share, points): Q=16, 32, 64 about 18.9; Q=128 2.5; **Q=256 1.0**; Q=512 1.4; Q=4096 0.5. Modulo hashing is perfectly balanced (0.2) but moves **40%** of copies on a join, twice the ideal 20% | Q=256 is the smallest Q with balance near 1 point. Modulo rejection is now measured. |
 | A10 | Walk the Merkle tree level by level or fetch it at once? | At depth 4: 70 round trips level by level, 40 one-shot, but one-shot sends 52% more bytes at 1% divergence (229 vs 151 KB) and 80% more hashes | Keep level by level (bytes are the scarce resource in anti-entropy). One-shot only if round trips cost far more than bandwidth. |
 
-Charts: `x1_noise`, `x2_stale`, `x2_timeout`, `x3_converge`, `x3_idle`, `x4_cluster`, `x5_workload`, `x6_handoff`, `x7_repair`, `x7_fanout`, `x8_suspicion`, `x8_shapes`, `a9_q_balance`, `a9_q_moved`, `a10_roundtrips`, `a10_kb` (all `.svg` in `results/`).
+Charts: `x1_noise`, `x2_stale`, `x2_timeout`, `x3_converge`, `x3_idle`, `x4_cluster`, `x5_workload`, `x6_handoff`, `x7_repair`, `x7_fanout`, `x8_suspicion`, `x8_shapes`, `a9_q_balance`, `a9_q_moved`, `a10_roundtrips`, `a10_kb` (all `.svg` in `results/charts/`).
 
 ## Details worth knowing
 

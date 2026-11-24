@@ -1,8 +1,8 @@
 # Dynamo-inspired store with configurable consistency: report
 
-All numbers below come from `go run ./cmd/bench -duration 2s` ([results/benchmark.md](results/benchmark.md)) and `go run ./cmd/demo` ([results/demo.txt](results/demo.txt)). The simulation runs in one process, so latencies depend on Go's timers and the load on the machine. Treat them as relative, not absolute.
+All numbers below come from `go run ./cmd/bench -duration 2s` ([results/benchmark.md](../../results/benchmark.md)) and `go run ./cmd/demo` ([results/demo.txt](../../results/demo.txt)). The simulation runs in one process, so latencies depend on Go's timers and the load on the machine. Treat them as relative, not absolute.
 
-> **Default ring changed.** The default is now 256 fixed equal partitions with one eager Merkle tree per partition (see [docs/MERKLE_EXPERIMENTS.md](docs/MERKLE_EXPERIMENTS.md) and [docs/FIXED_MERKLE.md](docs/FIXED_MERKLE.md)). `results/` was regenerated on it. Numbers quoted in the text below were measured on the earlier 64-random-vnode ring and differ slightly from the current tables (for example E1 stale reads at R=W=1 are now 25.9% rather than 21.5%, and strict R=W=2 minority availability is 40.6% rather than 28%); the conclusions are unchanged. Use `results/` for current numbers.
+> **Default ring changed.** The default is now 256 fixed equal partitions with one eager Merkle tree per partition (see [docs/MERKLE_EXPERIMENTS.md](../experiments/MERKLE_EXPERIMENTS.md) and [docs/FIXED_MERKLE.md](../experiments/FIXED_MERKLE.md)). `results/` was regenerated on it. Numbers quoted in the text below were measured on the earlier 64-random-vnode ring and differ slightly from the current tables (for example E1 stale reads at R=W=1 are now 25.9% rather than 21.5%, and strict R=W=2 minority availability is 40.6% rather than 28%); the conclusions are unchanged. Use `results/` for current numbers.
 
 ## 1. What was built
 

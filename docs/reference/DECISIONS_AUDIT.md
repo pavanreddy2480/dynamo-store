@@ -1,6 +1,6 @@
 # Decision audit: what is proven, what is not
 
-> **Update (branch `ablations`).** Every gap listed in section 4 has now been run; see [ABLATIONS.md](ABLATIONS.md) for results. Short version: run-to-run noise is small (so the single-run worry was overblown); the latency model, workload and N do change the headline stale-read numbers, so report them as ranges; periodic anti-entropy was added and measured; hinted handoff had a real bug (fixed); modulo hashing, querying R instead of all N, and one-shot Merkle walks are now rejected with data. The ratings below are the state before those runs.
+> **Update (branch `ablations`).** Every gap listed in section 4 has now been run; see [ABLATIONS.md](../experiments/ABLATIONS.md) for results. Short version: run-to-run noise is small (so the single-run worry was overblown); the latency model, workload and N do change the headline stale-read numbers, so report them as ranges; periodic anti-entropy was added and measured; hinted handoff had a real bug (fixed); modulo hashing, querying R instead of all N, and one-shot Merkle walks are now rejected with data. The ratings below are the state before those runs.
 
 Every design choice in the project, rated by how much evidence stands behind it today. Written 2026-11-24 after the Merkle, fixed-partition and vnode experiments. "Run" means an experiment that exists in the repo and was executed; "reasoned" means an argument in the docs but no measurement.
 
@@ -34,7 +34,7 @@ These could change a headline number or a conclusion, so decide on them first.
 | Failed quorum write is not rolled back (D12) | PARTIAL | Demo case 2 | One scenario. |
 | 20 ms replica timeout (D14) | PARTIAL | A5: 4 timeouts tried; 20 ms is the first with 0% spurious failures | Depends on the latency model (decision 1 above). The client timeout of 3x was never tested. |
 | MD5 vs FNV-1a hash (D3) | PARTIAL | A1: MD5 CV 0.056 vs FNV 0.401 at 64 vnodes | The cause ("FNV mixes short similar strings poorly") is asserted, not tested. The claim that FNV with 16 vnodes "left a node with no keys" is not in any committed experiment (A1 shows 27.9% minimum for FNV at 64). |
-| 64 virtual nodes (D3) | PARTIAL | A1 (4 counts, 1 placement), now A1b (11 counts, 20 placements) | A1b shows 64 is defensible, not optimal: imbalance falls like 1/sqrt(vnodes), 128-256 is better at no measured cost. See [VNODE_ABLATION.md](VNODE_ABLATION.md). |
+| 64 virtual nodes (D3) | PARTIAL | A1 (4 counts, 1 placement), now A1b (11 counts, 20 placements) | A1b shows 64 is defensible, not optimal: imbalance falls like 1/sqrt(vnodes), 128-256 is better at no measured cost. See [VNODE_ABLATION.md](../experiments/VNODE_ABLATION.md). |
 | Merkle anti-entropy over full-state (A6, branch) | PROVEN | 97% fewer bytes at 1% divergence; randomized equivalence test | Costs 13 round trips per pair; wall-clock was slower than full-state at 1-10% divergence in the sim. |
 | Eager vs lazy trees (A7, branch) | PARTIAL | CPU microbenchmark via `Inject` | Excludes the network and lock contention. Chosen eager for simplicity, which is fine. |
 | Fixed partitions beat random vnodes (A8, branch) | PROVEN for balance and data moved | 59.8-60.8% shares; 19.9% moved on join | Q=256 was your pick, not swept. No Q sweep exists. |

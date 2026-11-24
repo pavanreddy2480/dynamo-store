@@ -127,7 +127,7 @@ func where(ci int, v string) func([]string) bool {
 
 func main() {
 	flag.Parse()
-	out := func(name string) string { return filepath.Join(*dir, name) }
+	out := func(name string) string { return filepath.Join(*dir, "charts", name) }
 	b := load(filepath.Join(*dir, "benchmark.md"))
 	a := load(filepath.Join(*dir, "architecture.md"))
 

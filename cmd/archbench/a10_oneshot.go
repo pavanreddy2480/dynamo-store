@@ -14,7 +14,7 @@ import (
 )
 
 // merkleWalk runs experiment A10, appends its table to the report and
-// draws results/a10_roundtrips.svg and a10_kb.svg.
+// draws results/charts/a10_roundtrips.svg and a10_kb.svg.
 func merkleWalk() {
 	w("\n## A10. Merkle walk: one level per round trip vs whole tree at once\n\n")
 	w("A6's setup (20,000 keys, 256 partitions, one round over 10 node pairs). Level-by-level sends only the hashes under subtrees that differ but needs one round trip per level; one-shot sends every hash of a differing partition's tree after the roots.\n\n")
@@ -36,7 +36,7 @@ func merkleWalk() {
 		}
 	}
 	names := []string{"level by level", "one shot"}
-	chart.Bar(*outDir+"/a10_roundtrips.svg", "Round trips per anti-entropy round (10 pairs)", "tree depth and divergence", "round trips", groups, names, rt, false)
-	chart.Bar(*outDir+"/a10_kb.svg", "KB sent per anti-entropy round", "tree depth and divergence", "KB sent", groups, names, kb, false)
-	w("\n![round trips](a10_roundtrips.svg)\n![kb](a10_kb.svg)\n")
+	chart.Bar(*outDir+"/charts/a10_roundtrips.svg", "Round trips per anti-entropy round (10 pairs)", "tree depth and divergence", "round trips", groups, names, rt, false)
+	chart.Bar(*outDir+"/charts/a10_kb.svg", "KB sent per anti-entropy round", "tree depth and divergence", "KB sent", groups, names, kb, false)
+	w("\n![round trips](charts/a10_roundtrips.svg)\n![kb](charts/a10_kb.svg)\n")
 }

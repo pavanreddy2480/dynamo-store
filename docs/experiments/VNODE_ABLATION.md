@@ -6,7 +6,7 @@ Honestly: by reading experiment A1, which placed 100,000 keys on one 5-node ring
 
 ## Setup
 
-MD5 ring (the default), 5 nodes, N=3. Vnodes per node swept 1, 2, 4, ..., 1024. For each count, 20 independent placements (different node names, so tokens land in different spots), 20,000 keys each. Measured: share of replica copies per node (every node should hold 60%), copies that must move when a 5th node joins (ideal 20%), cost of one `PreferenceList` lookup (fastest of 5 runs) and of building the ring. Run it with `go run ./cmd/archbench -only A1b`; full table in [results/architecture.md](../results/architecture.md).
+MD5 ring (the default), 5 nodes, N=3. Vnodes per node swept 1, 2, 4, ..., 1024. For each count, 20 independent placements (different node names, so tokens land in different spots), 20,000 keys each. Measured: share of replica copies per node (every node should hold 60%), copies that must move when a 5th node joins (ideal 20%), cost of one `PreferenceList` lookup (fastest of 5 runs) and of building the ring. Run it with `go run ./cmd/archbench -only A1b`; full table in [results/architecture.md](../../results/architecture.md).
 
 ## Results
 
@@ -25,9 +25,9 @@ MD5 ring (the default), 5 nodes, N=3. Vnodes per node swept 1, 2, 4, ..., 1024. 
 
 (Spread = most-loaded minus least-loaded node's share, in points; 10 means e.g. 55% to 65%.)
 
-![balance](../results/a1b_balance.svg)
-![moved](../results/a1b_moved.svg)
-![lookup](../results/a1b_lookup.svg)
+![balance](../../results/charts/a1b_balance.svg)
+![moved](../../results/charts/a1b_moved.svg)
+![lookup](../../results/charts/a1b_lookup.svg)
 
 ## What it shows
 

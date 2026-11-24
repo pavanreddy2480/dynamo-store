@@ -22,7 +22,7 @@ Read repair on vs off at R=W=1 (the claim in D13 that it barely changes stalenes
 
 Verdict: the ranges overlap, so there is no measurable effect of read repair on staleness.
 
-![noise](x1_noise.svg)
+![noise](charts/x1_noise.svg)
 
 ## X2. Sensitivity to the latency model
 
@@ -54,8 +54,8 @@ Replica timeout vs spurious put failures on a healthy cluster (R=W=2), same thre
 | cross-region (5ms hop) | 20ms | 23.0 (22.6-23.3) |
 | cross-region (5ms hop) | 100ms | 0.0 (0.0-0.0) |
 
-![stale](x2_stale.svg)
-![timeout](x2_timeout.svg)
+![stale](charts/x2_stale.svg)
+![timeout](charts/x2_timeout.svg)
 
 ## X3. Periodic anti-entropy: how often?
 
@@ -68,8 +68,8 @@ Before this ablation nothing started anti-entropy; benchmarks called it by hand.
 | 500ms | 2302.1 (1459.4-3973.6) | 9 | 7.9 |
 | 2s | 5982.5 (2970.2-8005.7) | 3 | 3.6 |
 
-![converge](x3_converge.svg)
-![idle](x3_idle.svg)
+![converge](charts/x3_converge.svg)
+![idle](charts/x3_idle.svg)
 
 ## X4. Cluster size and replication factor
 
@@ -82,7 +82,7 @@ E1 workload. "Majority" is R=W=floor(N/2)+1 (R+W>N). Mean (min-max) of 3 runs.
 | 5 | 5 | 23.4 (21.1-24.8) | 3,3 | 0.0 (0.0-0.0) | 7.8 (7.5-8.0) | 7.8 (7.6-8.0) |
 | 7 | 3 | 26.4 (26.0-27.0) | 2,2 | 0.0 (0.0-0.0) | 8.6 (8.3-8.8) | 8.5 (8.2-8.9) |
 
-![cluster](x4_cluster.svg)
+![cluster](charts/x4_cluster.svg)
 
 ## X5. Workload shape
 
@@ -98,7 +98,7 @@ Stale reads depend on how often a read lands right after a write to the same key
 | writers pause 2ms (read-heavy) | 12.2 (12.0-12.5) | 0.3 (0.3-0.3) |
 | Zipf-skewed reads (hot keys) | 25.1 (24.6-25.5) | 0.2 (0.2-0.2) |
 
-![workload](x5_workload.svg)
+![workload](charts/x5_workload.svg)
 
 ## X6. Hinted-handoff interval
 
@@ -112,7 +112,7 @@ Same partition scenario as X3 (anti-entropy off). After heal, how long until eve
 | 100ms | 151.0 (148.5-153.8) |
 | 500ms | 562.6 (561.2-564.9) |
 
-![handoff](x6_handoff.svg)
+![handoff](charts/x6_handoff.svg)
 
 ## X7. Read path: read repair and query fan-out
 
@@ -138,8 +138,8 @@ Same partition scenario as X3 (anti-entropy off). After heal, how long until eve
 | 2,2 | slow | all N | 18.4 (18.3-18.5) | 0.0 (0.0-0.0) | 3.1 (3.1-3.1) |
 | 2,2 | slow | R only | 21.7 (21.7-21.9) | 0.0 (0.0-0.1) | 2.9 (2.9-2.9) |
 
-![repair](x7_repair.svg)
-![fanout](x7_fanout.svg)
+![repair](charts/x7_repair.svg)
+![fanout](charts/x7_fanout.svg)
 
 ## X8. Failure detector and partition shape
 
@@ -164,5 +164,5 @@ Same partition scenario as X3 (anti-entropy off). After heal, how long until eve
 | 2 vs 3, flapping | strict | 85.7 | 0 | true |
 | 2 vs 3, flapping | sloppy | 99.1 | 0 | true |
 
-![suspicion](x8_suspicion.svg)
-![shapes](x8_shapes.svg)
+![suspicion](charts/x8_suspicion.svg)
+![shapes](charts/x8_shapes.svg)

@@ -52,7 +52,7 @@ var (
 )
 
 // chartPath returns where an ablation chart is written.
-func chartPath(name string) string { return filepath.Join(*outDir, name) }
+func chartPath(name string) string { return filepath.Join(*outDir, "charts", name) }
 
 // x1Noise repeats E1 cells to show how much a single run varies.
 func x1Noise() {
@@ -82,7 +82,7 @@ func x1Noise() {
 	if rr[0].lo <= rr[1].hi && rr[1].lo <= rr[0].hi {
 		verdict = "the ranges overlap, so there is no measurable effect of read repair on staleness"
 	}
-	out("\nVerdict: %s.\n\n![noise](x1_noise.svg)\n", verdict)
+	out("\nVerdict: %s.\n\n![noise](charts/x1_noise.svg)\n", verdict)
 }
 
 // latencyModel is a named pair of replica and client latency models.
@@ -145,7 +145,7 @@ func x2Latency() {
 		}
 	}
 	chart.Bar(chartPath("x2_timeout.svg"), "X2 spurious put failures vs replica timeout", "replica timeout", "puts failing (%)", tg, names, fails, false)
-	out("\n![stale](x2_stale.svg)\n![timeout](x2_timeout.svg)\n")
+	out("\n![stale](charts/x2_stale.svg)\n![timeout](charts/x2_timeout.svg)\n")
 }
 
 // x4Cluster varies the node count and the replication factor N.
@@ -169,7 +169,7 @@ func x4Cluster() {
 	m1, l1, h1 := column(one)
 	mm, lm, hm := column(maj)
 	chart.BarErr(chartPath("x4_cluster.svg"), "X4 stale reads by cluster size and N", "cluster", "stale reads (%)", labels, []string{"R=W=1", "majority quorum"}, [][]float64{m1, mm}, [][]float64{l1, lm}, [][]float64{h1, hm}, false)
-	out("\n![cluster](x4_cluster.svg)\n")
+	out("\n![cluster](charts/x4_cluster.svg)\n")
 }
 
 // x5Workload varies the key count, reader count, write rate and key skew.
@@ -203,7 +203,7 @@ func x5Workload() {
 	m1, l1, h1 := column(a)
 	m2, l2, h2 := column(b)
 	chart.BarErr(chartPath("x5_workload.svg"), "X5 stale reads by workload shape", "workload", "stale reads (%)", short, []string{"R=W=1", "R=1,W=2"}, [][]float64{m1, m2}, [][]float64{l1, l2}, [][]float64{h1, h2}, false)
-	out("\n![workload](x5_workload.svg)\n")
+	out("\n![workload](charts/x5_workload.svg)\n")
 }
 
 // toLabel names a replica timeout; zero is the latency-derived default.

@@ -4,7 +4,7 @@ This guide walks through the whole project in the order you need to understand i
 
 It describes the current design (branches `adaptive-defaults` and `ablations`), which runs the whole system as a **simulation inside one Go program**. The "network" is fake (messages are passed in memory with a random delay), which lets us create network failures on purpose and measure what happens.
 
-> **What is different from the first version of this guide.** The ring is now **256 equal fixed partitions** instead of 64 random flags per node. Anti-entropy compares **Merkle trees** instead of sending everything, and a **background loop** starts it every 100 ms. The replica timeout is **computed from the network speed** instead of fixed at 20 ms. Hinted handoff had a bug (one shared stopwatch) that is fixed. Why each change was made, with measurements, is in [ABLATION.md](ABLATION.md); the reference version with decision numbers (D1 to D15) is [ARCHITECTURE_DECISIONS.md](ARCHITECTURE_DECISIONS.md); every message is in [MESSAGES.md](MESSAGES.md).
+> **What is different from the first version of this guide.** The ring is now **256 equal fixed partitions** instead of 64 random flags per node. Anti-entropy compares **Merkle trees** instead of sending everything, and a **background loop** starts it every 100 ms. The replica timeout is **computed from the network speed** instead of fixed at 20 ms. Hinted handoff had a bug (one shared stopwatch) that is fixed. Why each change was made, with measurements, is in [ABLATION.md](ABLATION.md); the reference version with decision numbers (D1 to D15) is [ARCHITECTURE_DECISIONS.md](../reference/ARCHITECTURE_DECISIONS.md); every message is in [MESSAGES.md](MESSAGES.md).
 
 > **Tip:** If a word is new, check the [glossary](#16-glossary) at the end.
 
@@ -764,7 +764,7 @@ converged, and every acknowledged item (milk, eggs, bread) is still there
 
 ## 14. Under the hood: how each component is implemented
 
-Sections 5 to 12 explained **what** each component does. This section shows **how** it is built in Go: the data it keeps, the steps of its main function, how it stays safe when many goroutines use it at once, and the real code for the important parts. The order is the same as before, so each part only uses parts already covered. For the exact contents of every message, see [MESSAGES_EXPLAINED.md](MESSAGES_EXPLAINED.md).
+Sections 5 to 12 explained **what** each component does. This section shows **how** it is built in Go: the data it keeps, the steps of its main function, how it stays safe when many goroutines use it at once, and the real code for the important parts. The order is the same as before, so each part only uses parts already covered. For the exact contents of every message, see [MESSAGES.md](MESSAGES.md).
 
 ### 14.1 Vector clocks (`vclock/vclock.go`, 195 lines)
 
@@ -1186,7 +1186,7 @@ Run them with `go test -race ./...`. The `-race` flag makes Go watch for two gor
 
 How does the benchmark know a read was stale? `cmd/bench/oracle.go` is a **referee**. Every client tells the referee about each write that was acknowledged. Before a read starts, the client asks the referee "which writes were already confirmed?", and after the read it checks that the store returned all of them (or something newer). Missing one means **stale**.
 
-Headline numbers (from `REPORT.md`):
+Headline numbers (from `docs/reference/REPORT.md`):
 
 * **Stale reads, no failures:** R = W = 1 → about 26% (8% on a fast LAN, 41% cross-region; see ABLATION.md); R = 1, W = 2 → 0.4%; any R + W > 3 → 0%.
 * **Concurrent writers:** dotted version vectors lost 0 acknowledged items; plain per-node vector clocks lost 665 of 3278; LWW lost 4397 of 5196.
@@ -1230,4 +1230,4 @@ Headline numbers (from `REPORT.md`):
 
 ---
 
-For every message the components exchange, with full real examples, see [MESSAGES_EXPLAINED.md](MESSAGES_EXPLAINED.md). For the detailed design decisions and every experiment's evidence, see [ARCHITECTURE.md](../ARCHITECTURE.md) and [REPORT.md](../REPORT.md).
+For every message the components exchange, with full real examples, see [MESSAGES.md](MESSAGES.md). For the detailed design decisions and every experiment's evidence, see [ARCHITECTURE_DECISIONS.md](../reference/ARCHITECTURE_DECISIONS.md), [ABLATION.md](ABLATION.md) and [REPORT.md](../reference/REPORT.md).

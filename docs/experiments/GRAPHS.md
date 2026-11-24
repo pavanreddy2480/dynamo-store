@@ -1,6 +1,6 @@
 # Graphs for every experiment
 
-Charts live in `results/` as SVG (open in a browser; hover a bar or point for its exact value). `go run ./cmd/plots` redraws all of them from the committed tables in `results/benchmark.md` and `results/architecture.md`, so a chart always matches the numbers next to it. A1b's charts are drawn by `go run ./cmd/archbench` itself.
+Charts live in `results/charts/` as SVG (open in a browser; hover a bar or point for its exact value). `go run ./cmd/plots` redraws all of them from the committed tables in `results/benchmark.md` and `results/architecture.md`, so a chart always matches the numbers next to it. A1b's charts are drawn by `go run ./cmd/archbench` itself.
 
 | Experiment | What it tests | Chart(s) |
 |---|---|---|

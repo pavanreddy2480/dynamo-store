@@ -103,7 +103,7 @@ func ablateVnodes(vn int) vnodeResult {
 }
 
 // vnodeAblation runs experiment A1b, appends its table to the report and
-// draws results/a1b_balance.svg, a1b_moved.svg and a1b_lookup.svg.
+// draws results/charts/a1b_balance.svg, a1b_moved.svg and a1b_lookup.svg.
 func vnodeAblation() {
 	w("\n## A1b. Ablation: how many virtual nodes per node?\n\n")
 	w("MD5 ring, 5 nodes, N=3, %d keys, averaged over %d placements (each placement uses different node names, so tokens land in different places). Spread = most-loaded minus least-loaded node's share of replica copies, in points (ideal 0; every node should hold 60%%). Moved = replica copies a node must receive when a 5th node joins a 4-node ring (ideal 20%%; leaving is the same pair of rings read backwards). \"Worst\" is the worst of the %d placements. Lookup is `PreferenceList` on one core (fastest of 5 runs).\n\n", a1bKeys, a1bPlacements, a1bPlacements)
@@ -118,8 +118,8 @@ func vnodeAblation() {
 		moved, wmoved, ideal = append(moved, r.moved), append(wmoved, r.worstMoved), append(ideal, 20)
 		lookup = append(lookup, r.lookupNs)
 	}
-	chart.Line(*outDir+"/a1b_balance.svg", "Load imbalance vs virtual nodes per node (lower is better)", "virtual nodes per node", "max share - min share (points)", xs, []string{"mean of 20", "worst of 20"}, [][]float64{spread, worst}, false)
-	chart.Line(*outDir+"/a1b_moved.svg", "Replica copies moved when a node joins (4 to 5 nodes)", "virtual nodes per node", "% of all copies", xs, []string{"mean of 20", "worst of 20", "ideal"}, [][]float64{moved, wmoved, ideal}, false)
-	chart.Line(*outDir+"/a1b_lookup.svg", "Cost of one preference-list lookup", "virtual nodes per node", "ns per lookup", xs, []string{"lookup"}, [][]float64{lookup}, false)
-	w("\n![balance](a1b_balance.svg)\n![moved](a1b_moved.svg)\n![lookup](a1b_lookup.svg)\n")
+	chart.Line(*outDir+"/charts/a1b_balance.svg", "Load imbalance vs virtual nodes per node (lower is better)", "virtual nodes per node", "max share - min share (points)", xs, []string{"mean of 20", "worst of 20"}, [][]float64{spread, worst}, false)
+	chart.Line(*outDir+"/charts/a1b_moved.svg", "Replica copies moved when a node joins (4 to 5 nodes)", "virtual nodes per node", "% of all copies", xs, []string{"mean of 20", "worst of 20", "ideal"}, [][]float64{moved, wmoved, ideal}, false)
+	chart.Line(*outDir+"/charts/a1b_lookup.svg", "Cost of one preference-list lookup", "virtual nodes per node", "ns per lookup", xs, []string{"lookup"}, [][]float64{lookup}, false)
+	w("\n![balance](charts/a1b_balance.svg)\n![moved](charts/a1b_moved.svg)\n![lookup](charts/a1b_lookup.svg)\n")
 }

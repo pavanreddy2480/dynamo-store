@@ -75,7 +75,7 @@ func measureSync(cfg store.Config, div float64) syncCost {
 }
 
 // merkleVsFull runs experiment A6, appends its tables to the report and
-// draws results/a6_keys_sent.svg, a6_bytes_sent.svg and a6_depth.svg.
+// draws results/charts/a6_keys_sent.svg, a6_bytes_sent.svg and a6_depth.svg.
 func merkleVsFull() {
 	w("\n## A6. Anti-entropy: full-state exchange vs Merkle trees\n\n")
 	w("%d keys, all 3 replicas identical, then a fraction of keys gets a newer version on one replica only. One anti-entropy round (10 node pairs). Traffic is both directions; bytes use a simple size model (key, value, dot, context entries; 8 bytes per hash).\n\n", a6Keys)
@@ -98,9 +98,9 @@ func merkleVsFull() {
 	}
 	groups := []string{"0% diverged", "1% diverged", "10% diverged"}
 	names := []string{modes[0].name, modes[1].name}
-	chart.Bar(*outDir+"/a6_keys_sent.svg", "Keys sent in one anti-entropy round (20,000 keys, log scale)", "fraction of keys that differ on one replica", "keys sent", groups, names, keys, true)
-	chart.Bar(*outDir+"/a6_bytes_sent.svg", "KB sent in one anti-entropy round (20,000 keys, log scale)", "fraction of keys that differ on one replica", "KB sent", groups, names, kb, true)
-	w("\n![keys sent](a6_keys_sent.svg)\n![bytes sent](a6_bytes_sent.svg)\n")
+	chart.Bar(*outDir+"/charts/a6_keys_sent.svg", "Keys sent in one anti-entropy round (20,000 keys, log scale)", "fraction of keys that differ on one replica", "keys sent", groups, names, keys, true)
+	chart.Bar(*outDir+"/charts/a6_bytes_sent.svg", "KB sent in one anti-entropy round (20,000 keys, log scale)", "fraction of keys that differ on one replica", "KB sent", groups, names, kb, true)
+	w("\n![keys sent](charts/a6_keys_sent.svg)\n![bytes sent](charts/a6_bytes_sent.svg)\n")
 
 	w("\nDepth of each partition's tree (leaves = 2^depth) at 1%% and 10%% divergence:\n\n| depth | divergence | keys sent | hashes sent | KB sent | round trips |\n|---|---|---|---|---|---|\n")
 	depths := []float64{0, 1, 2, 3, 4, 5, 6, 8}
@@ -118,6 +118,6 @@ func merkleVsFull() {
 			dkb[i] = append(dkb[i], float64(r.s.Bytes)/1024)
 		}
 	}
-	chart.Line(*outDir+"/a6_depth.svg", "KB sent per round vs depth of each partition tree (20,000 keys, 256 partitions)", "tree depth per partition (2^depth leaves)", "KB sent", depthLabels, []string{"1% diverged", "10% diverged"}, dkb, false)
-	w("\n![depth](a6_depth.svg)\n")
+	chart.Line(*outDir+"/charts/a6_depth.svg", "KB sent per round vs depth of each partition tree (20,000 keys, 256 partitions)", "tree depth per partition (2^depth leaves)", "KB sent", depthLabels, []string{"1% diverged", "10% diverged"}, dkb, false)
+	w("\n![depth](charts/a6_depth.svg)\n")
 }

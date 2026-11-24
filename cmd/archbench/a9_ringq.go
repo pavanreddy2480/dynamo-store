@@ -47,7 +47,7 @@ func moduloStats(keys int) (spread, moved float64) {
 }
 
 // ringQ runs experiment A9, appends its table to the report and draws
-// results/a9_q_balance.svg and a9_q_moved.svg.
+// results/charts/a9_q_balance.svg and a9_q_moved.svg.
 func ringQ() {
 	const keys = 100000
 	ids4, ids5 := nodes(4), nodes(5)
@@ -68,7 +68,7 @@ func ringQ() {
 		spreads, moved, ideal, modMoved = append(spreads, mx-mn), append(moved, j), append(ideal, 20), append(modMoved, mm)
 	}
 	w("| modulo hash | - | %.1f | %.1f%% |\n", ms, mm)
-	chart.Line(*outDir+"/a9_q_balance.svg", "Load imbalance vs number of fixed partitions Q", "partitions Q", "max share - min share (points)", xs, []string{"fixed Q"}, [][]float64{spreads}, false)
-	chart.Line(*outDir+"/a9_q_moved.svg", "Replica copies moved on a join: fixed partitions vs modulo hashing", "partitions Q", "% of all copies", xs, []string{"fixed Q", "ideal", "modulo"}, [][]float64{moved, ideal, modMoved}, false)
-	w("\n![balance](a9_q_balance.svg)\n![moved](a9_q_moved.svg)\n")
+	chart.Line(*outDir+"/charts/a9_q_balance.svg", "Load imbalance vs number of fixed partitions Q", "partitions Q", "max share - min share (points)", xs, []string{"fixed Q"}, [][]float64{spreads}, false)
+	chart.Line(*outDir+"/charts/a9_q_moved.svg", "Replica copies moved on a join: fixed partitions vs modulo hashing", "partitions Q", "% of all copies", xs, []string{"fixed Q", "ideal", "modulo"}, [][]float64{moved, ideal, modMoved}, false)
+	w("\n![balance](charts/a9_q_balance.svg)\n![moved](charts/a9_q_moved.svg)\n")
 }
