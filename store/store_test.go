@@ -82,30 +82,6 @@ func TestStrictQuorumUnavailableOnMinoritySide(t *testing.T) {
 	}
 }
 
-func TestPartitionScenarios(t *testing.T) {
-	for _, o := range []ScenarioOptions{
-		{Policy: KeepSiblings, R: 1, W: 1},
-		{Policy: KeepSiblings, R: 2, W: 2},
-		{Policy: KeepSiblings, R: 2, W: 2, Sloppy: true},
-		{Policy: LastWriterWins, R: 1, W: 1},
-		{Policy: LastWriterWins, R: 1, W: 1, SkewMinority: 50 * time.Millisecond},
-	} {
-		r := RunPartitionScenario(o)
-		if !r.RuleHolds {
-			t.Errorf("%+v: rule violated\n%v", o, r.Log)
-		}
-		if o.Policy == KeepSiblings && len(r.Siblings) != 2 {
-			t.Errorf("%+v: want 2 siblings after heal, got %d", o, len(r.Siblings))
-		}
-		if o.Policy == KeepSiblings && !r.AckedKept {
-			t.Errorf("%+v: acknowledged write lost", o)
-		}
-		if o.Policy == LastWriterWins && r.AckedKept {
-			t.Errorf("%+v: expected LWW to drop one acknowledged write", o)
-		}
-	}
-}
-
 // Hinted handoff must deliver any number of hints to a recovered owner. The
 // old loop shared one 20ms deadline across every key of an owner, so with
 // enough hinted keys the later sends always timed out and the hints were

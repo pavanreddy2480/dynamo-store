@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"dynamostore/chart"
-	"dynamostore/store"
+	"dynamostore/network"
 )
 
 // measureAll runs w -reps times and summarises every metric of each run.
@@ -88,15 +88,15 @@ func x1Noise() {
 // latencyModel is a named pair of replica and client latency models.
 type latencyModel struct {
 	name    string
-	replica store.LatencyModel
-	client  store.LatencyModel
+	replica network.LatencyModel
+	client  network.LatencyModel
 }
 
 // latencyModels are a fast LAN, the default and a cross-region deployment.
 var latencyModels = []latencyModel{
-	{"LAN (0.1ms hop)", store.LatencyModel{Base: 100 * time.Microsecond, JitterMean: 200 * time.Microsecond, SlowProb: .03, SlowExtra: time.Millisecond}, store.LatencyModel{Base: 50 * time.Microsecond, JitterMean: 50 * time.Microsecond}},
-	{"default (0.4ms hop)", store.DefaultLatency, store.DefaultClientLatency},
-	{"cross-region (5ms hop)", store.LatencyModel{Base: 5 * time.Millisecond, JitterMean: 5 * time.Millisecond, SlowProb: .03, SlowExtra: 50 * time.Millisecond}, store.LatencyModel{Base: 500 * time.Microsecond, JitterMean: 500 * time.Microsecond}},
+	{"LAN (0.1ms hop)", network.LatencyModel{Base: 100 * time.Microsecond, JitterMean: 200 * time.Microsecond, SlowProb: .03, SlowExtra: time.Millisecond}, network.LatencyModel{Base: 50 * time.Microsecond, JitterMean: 50 * time.Microsecond}},
+	{"default (0.4ms hop)", network.DefaultLatency, network.DefaultClientLatency},
+	{"cross-region (5ms hop)", network.LatencyModel{Base: 5 * time.Millisecond, JitterMean: 5 * time.Millisecond, SlowProb: .03, SlowExtra: 50 * time.Millisecond}, network.LatencyModel{Base: 500 * time.Microsecond, JitterMean: 500 * time.Microsecond}},
 }
 
 // x2Latency reruns E1 and the timeout experiment under three latency models.

@@ -214,7 +214,7 @@ If your friends live next door, a message is quick and writes spread to all thre
 
 #### The real version
 
-`LatencyModel` in `store/network.go` draws each message delay as base + random jitter, plus a rare slow path. We ran E1 under three models (X2): fast LAN (0.1 ms hop), our default (0.4 ms hop), cross-region (5 ms hop).
+`LatencyModel` in `network/network.go` draws each message delay as base + random jitter, plus a rare slow path. We ran E1 under three models (X2): fast LAN (0.1 ms hop), our default (0.4 ms hop), cross-region (5 ms hop).
 
 #### What we measured
 
@@ -353,7 +353,7 @@ Picture a clock face. You hash a key to a spot on the clock and give it to the n
 
 #### The real version
 
-`store/ring.go`. A key's `PreferenceList(key, N)` is the next N distinct nodes clockwise. A **sloppy** write may spill past these onto further nodes.
+`ring/ring.go`. A key's `PreferenceList(key, N)` is the next N distinct nodes clockwise. A **sloppy** write may spill past these onto further nodes.
 
 ### C2. Which hash function?
 
@@ -387,7 +387,7 @@ fixed pieces:    | a | b | c | a | b | c | a |    equal and predictable
 
 #### The real version
 
-`NewRing` (random vnodes) and `NewFixedRing` (equal pieces, in `store/ring.go`). With fixed pieces the whole clock is cut into `Q` equal **partitions**; partition `i` starts as node `i mod 5`'s. Each partition has a precomputed list of its owner nodes. `Config.Partitions` selects it (default 256).
+`NewRing` (random vnodes) and `NewFixedRing` (equal pieces, in `ring/ring.go`). With fixed pieces the whole clock is cut into `Q` equal **partitions**; partition `i` starts as node `i mod 5`'s. Each partition has a precomputed list of its owner nodes. `Config.Partitions` selects it (default 256).
 
 #### What we tested (A1b, A8)
 
@@ -520,7 +520,7 @@ If every pair of friends builds its own private fingerprint tree, each new write
 
 #### The real version
 
-`store/merkle.go` holds the tree and `Node.trees` maps `partition -> tree`. When a key is written, `Node.put` (`store/antientropy.go`) updates the tree of the key's partition. Fixed partitions are what made this natural: the ring has exactly `Q` pieces and each key belongs to exactly one.
+`merkle/merkle.go` holds the tree and `Node.trees` maps `partition -> tree`. When a key is written, `Node.put` (`store/antientropy.go`) updates the tree of the key's partition. Fixed partitions are what made this natural: the ring has exactly `Q` pieces and each key belongs to exactly one.
 
 A test (`checkTreesMatchData`) rebuilds every tree from scratch from the stored data and checks that the incrementally updated trees never drift from it.
 
@@ -657,7 +657,7 @@ We keep it because it is cheap and helps read keys, but we **do not claim it mak
 
 ## 7. Merkle trees in detail, with the messages they send
 
-This section is the "how" behind D2 to D5. Everything here is in `store/merkle.go` and `store/antientropy.go`. The numbers in the worked example are small and made up so it fits on a page; the measured numbers are in D2.
+This section is the "how" behind D2 to D5. Everything here is in `merkle/merkle.go` and `store/antientropy.go`. The numbers in the worked example are small and made up so it fits on a page; the measured numbers are in D2.
 
 ### 7.1 One tree, built from the keys
 
@@ -864,7 +864,7 @@ This was in `main` too, so the fix also lives on its own small branch, `fix-hand
 
 What differs from `main` (non-comment lines of `store/`: 1,151 on `main`, about 1,616 on this branch):
 
-1. Merkle anti-entropy replaces sending everything (largest addition: `store/merkle.go`, `store/antientropy.go`).
+1. Merkle anti-entropy replaces sending everything (largest addition: `merkle/merkle.go`, `store/antientropy.go`).
 2. 256 fixed partitions replace 64 random vnodes, with a tree per partition.
 3. Anti-entropy runs in the background every 100 ms; on `main` nothing started it.
 4. The replica timeout is derived from the network model instead of fixed at 20 ms.

@@ -5,7 +5,7 @@
 // real network. It also provides the failure-detector view (Reachable)
 // that coordinators use to choose live nodes.
 
-package store
+package network
 
 import (
 	"context"

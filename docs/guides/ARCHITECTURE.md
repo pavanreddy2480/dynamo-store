@@ -19,8 +19,8 @@ It describes the current design (branches `adaptive-defaults` and `ablations`), 
 5. [Component 1: vector clocks (`vclock/`)](#5-component-1-vector-clocks-vclock)
 6. [Component 2: versions and dots (`store/version.go`)](#6-component-2-versions-and-dots-storeversiongo)
 7. [Component 3: merge rules (`store/merge.go`)](#7-component-3-merge-rules-storemergego)
-8. [Component 4: the ring (`store/ring.go`)](#8-component-4-the-ring-storeringgo)
-9. [Component 5: the network (`store/network.go`, `store/messages.go`)](#9-component-5-the-network-storenetworkgo-storemessagesgo)
+8. [Component 4: the ring (`ring/ring.go`)](#8-component-4-the-ring-ringringgo)
+9. [Component 5: the network (`network/network.go`, `store/messages.go`)](#9-component-5-the-network-networknetworkgo-storemessagesgo)
 10. [Component 6: the node and the coordinator (`store/node.go`, `store/coordinator.go`)](#10-component-6-the-node-and-the-coordinator)
 11. [Component 7: the three repair helpers (`store/repair.go`)](#11-component-7-the-three-repair-helpers)
 12. [Component 8: the client, the resolver and the cluster](#12-component-8-the-client-the-resolver-and-the-cluster)
@@ -68,14 +68,14 @@ Each problem above gets one idea. Don't worry about the details yet; every idea 
 
 | Problem | Idea | One-line explanation | Where in the code |
 |---|---|---|---|
-| Where does each key live? | **Consistent-hash ring with fixed partitions** | Cut a circle into 256 equal pieces dealt out to the 5 computers; a key lives on the first 3 computers clockwise from its piece | `store/ring.go` |
+| Where does each key live? | **Consistent-hash ring with fixed partitions** | Cut a circle into 256 equal pieces dealt out to the 5 computers; a key lives on the first 3 computers clockwise from its piece | `ring/ring.go` |
 | Who handles a request? | **Coordinator** | The client picks one of the key's 3 computers; that one talks to the other two on the client's behalf | `store/coordinator.go` |
 | How many answers are enough? | **Quorums R and W** | A write waits for W "saved!" replies, a read waits for R answers. If R + W > 3, reads can't be stale | `store/coordinator.go` |
 | What if a replica is unreachable? | **Strict vs sloppy quorum + hinted handoff** | Strict: refuse. Sloppy: give the write to a stand-in computer with a sticky note "this belongs to n4", and the stand-in delivers it later | `store/coordinator.go`, `store/repair.go` |
 | Did two changes happen at the same time? | **Dotted version vectors** (a sharper kind of vector clock) | Each write gets a unique name and remembers which writes its author had seen | `vclock/`, `store/version.go` |
 | What do we do with two "at the same time" changes? | **Siblings + client merge** | Keep both, return both, the client merges them (here: union of the shopping items) and writes the result back | `store/merge.go`, `store/client.go`, `store/resolver.go` |
-| How do copies catch up after a failure? | **Read repair, hinted handoff, Merkle anti-entropy** | Three cleaners that copy missing versions to replicas that lack them; the third compares fingerprint trees so it only sends what differs, and runs by itself every 100 ms | `store/coordinator.go`, `store/repair.go`, `store/antientropy.go`, `store/merkle.go` |
-| How do we test failures safely? | **Simulated network** | An in-memory network with random (but repeatable) delays, which we can cut on purpose | `store/network.go` |
+| How do copies catch up after a failure? | **Read repair, hinted handoff, Merkle anti-entropy** | Three cleaners that copy missing versions to replicas that lack them; the third compares fingerprint trees so it only sends what differs, and runs by itself every 100 ms | `store/coordinator.go`, `store/repair.go`, `store/antientropy.go`, `merkle/merkle.go` |
+| How do we test failures safely? | **Simulated network** | An in-memory network with random (but repeatable) delays, which we can cut on purpose | `network/network.go` |
 
 For comparison, the code also has a simpler, worse policy, **last-writer-wins (LWW)**: keep only the version with the latest timestamp. It is there to show, with numbers, what goes wrong when you secretly pick a winner.
 
@@ -129,15 +129,15 @@ store/version.go            one stored value + its history (Dot, Version)
 store/merge.go              rules: which version replaces which               
       |                                                                       
       v                                                                       
-store/ring.go               which nodes own which key                         
-store/network.go            fake network with delays and partitions           
+ring/ring.go               which nodes own which key                         
+network/network.go            fake network with delays and partitions           
 store/messages.go           the envelopes sent over the network               
       |                                                                       
       v                                                                       
 store/node.go               one storage computer                              
 store/coordinator.go        a node handling a client's request                
 store/repair.go             hinted handoff                                    
-store/merkle.go             fingerprint tree of one partition's keys          
+merkle/merkle.go             fingerprint tree of one partition's keys          
 store/antientropy.go        compare two nodes' trees, exchange the differences
       |                                                                       
       v                                                                       
@@ -146,7 +146,7 @@ store/resolver.go           how the application merges siblings
 store/cluster.go            builds and owns everything                        
       |                                                                       
       v                                                                       
-store/scenario.go, cmd/*    experiments that use all of the above             
+scenario/scenario.go, cmd/*    experiments that use all of the above             
 ```
 
 </div>
@@ -387,7 +387,7 @@ So it is always safe to resend data, which the repair helpers do freely. After m
 
 ---
 
-## 8. Component 4: the ring (`store/ring.go`)
+## 8. Component 4: the ring (`ring/ring.go`)
 
 ### The story
 
@@ -426,7 +426,7 @@ The ring never changes after it is built, so everyone can read it at the same ti
 
 ---
 
-## 9. Component 5: the network (`store/network.go`, `store/messages.go`)
+## 9. Component 5: the network (`network/network.go`, `store/messages.go`)
 
 ### The story
 
@@ -689,7 +689,7 @@ every replica: [ {bread,eggs,milk} ]   one version again
 
 ## 13. Putting it all together: the partition story
 
-`store/scenario.go` (`RunPartitionScenario`) plays out the shopping-list story from section 1 for real. This is the actual output of `go run ./cmd/demo`, case 1 (siblings, R = 1, W = 1, strict quorum), with each step explained.
+`scenario/scenario.go` (`RunPartitionScenario`) plays out the shopping-list story from section 1 for real. This is the actual output of `go run ./cmd/demo`, case 1 (siblings, R = 1, W = 1, strict quorum), with each step explained.
 
 **Step 1. Everyone agrees.** A first write `{milk}` reaches all three replicas. Its dot is `n5:1`.
 
@@ -886,7 +886,7 @@ pile before        incoming           decision                 pile after
 
 **LWW tie-break.** `lwwBeats` checks, in order: same write (no), causally older (no), causally newer (yes), higher timestamp, and finally higher node id. The last step only has to be the same on every replica, so they all pick the same winner.
 
-### 14.4 The ring (`store/ring.go`, 251 lines)
+### 14.4 The ring (`ring/ring.go`, 251 lines)
 
 **Data.**
 
@@ -923,7 +923,7 @@ tokens (partition starts):  [p0] [p1] [p2] [p3] [p4] [p5] ...
 
 **Cost.** Finding the partition is a binary search, about 8 steps for 256 tokens; the walk itself is a precomputed array read. **Joins.** `WithNode(id)` hands the newcomer evenly spaced partitions taken from the existing owners, so about 20% of copies move. **Safety.** The ring is never changed after it is built (a join builds a new one), so it needs no lock.
 
-### 14.5 The network (`store/network.go`, 287 lines)
+### 14.5 The network (`network/network.go`, 287 lines)
 
 **Data.**
 
@@ -1076,7 +1076,7 @@ go func() {
 
 The answer to the client is cloned before this goroutine starts, because the goroutine keeps changing `merged`.
 
-### 14.8 Repair (`store/repair.go` 74 lines, `store/antientropy.go` 387 lines, `store/merkle.go` 190 lines)
+### 14.8 Repair (`store/repair.go` 74 lines, `store/antientropy.go` 387 lines, `merkle/merkle.go` 190 lines)
 
 **Hinted handoff (`handoffHints`).**
 
@@ -1096,7 +1096,7 @@ The answer to the client is cloned before this goroutine starts, because the gor
 
 Resending a note that was already delivered is harmless, because merging the same version twice changes nothing.
 
-**The tree (`merkle.go`).**
+**The tree (`merkle/merkle.go`).**
 
 ```go
 type merkle struct {

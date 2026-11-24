@@ -3,10 +3,12 @@
 //
 // # Model
 //
-// A Cluster has a fixed set of nodes on a consistent-hash Ring. Each key is
+// A Cluster has a set of nodes on a consistent-hash ring (package ring: 256
+// equal fixed partitions by default). Each key is
 // stored on N nodes (its preference list), the first N distinct nodes found
 // walking the ring clockwise from the key's hash. Nodes and clients exchange
-// messages over an in-memory Network that adds sampled latency and can be
+// messages over an in-memory network (package network) that adds sampled
+// latency and can be
 // partitioned; a message across a partition is dropped, so the sender only
 // learns about the failure through a timeout.
 //
@@ -39,7 +41,17 @@
 // Three mechanisms bring replicas back in line: hinted handoff (writes held
 // for an unreachable owner), read repair (after a read, replicas that
 // answered with older data are sent the merged result) and anti-entropy
-// (Cluster.AntiEntropy, a full-state exchange between every reachable pair).
+// (a Merkle-tree comparison, package merkle, between two replicas; each node
+// starts one with a random peer every AntiEntropyInterval, and
+// Cluster.AntiEntropy runs one round over every reachable pair).
+//
+// # Related packages
+//
+//   - vclock: vector clocks.
+//   - ring: consistent hashing and fixed partitions.
+//   - network: the simulated network (latency, partitions, slow nodes).
+//   - merkle: the hash tree kept for each partition.
+//   - scenario: the partition-and-reconcile scenario used by the demo and tests.
 //
 // See docs/reference/ARCHITECTURE_DECISIONS.md for the reasons behind each choice and the experiments
 // that support them.

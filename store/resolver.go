@@ -1,6 +1,6 @@
 // This file holds the application-level conflict resolution rule used with
 // the KeepSiblings policy: UnionResolver, which treats values as
-// comma-separated sets and merges siblings by set union, and the isSubset
+// comma-separated sets and merges siblings by set union, and the IsSubset
 // helper used to check that no acknowledged item was lost.
 
 package store
@@ -40,7 +40,7 @@ func UnionResolver(values []string) string {
 	return strings.Join(items, ",")
 }
 
-// isSubset reports whether every item of comma-separated set a is in b.
+// IsSubset reports whether every item of comma-separated set a is in b.
 //
 // Parameters:
 //   - a: the comma-separated items that must be present.
@@ -48,7 +48,7 @@ func UnionResolver(values []string) string {
 //
 // Returns:
 //   - bool: true if every non-empty item of a appears in b.
-func isSubset(a, b string) bool {
+func IsSubset(a, b string) bool {
 	have := map[string]bool{}
 	for _, it := range strings.Split(b, ",") {
 		have[it] = true

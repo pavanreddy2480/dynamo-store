@@ -11,7 +11,7 @@ import (
 	"hash/fnv"
 	"math"
 
-	"dynamostore/store"
+	"dynamostore/ring"
 )
 
 // fnv64 hashes a string with 64-bit FNV-1a.
@@ -43,18 +43,18 @@ func ringBalance() {
 	w("| hash | vnodes/node | min share | max share | max/min | coefficient of variation |\n|---|---|---|---|---|---|\n")
 	const keys = 100000
 	ids := nodes(5)
-	// A nil hash function selects store.NewRing, i.e. the store's default
+	// A nil hash function selects ring.NewRing, i.e. the store's default
 	// MD5-based hash, so the default is measured exactly as shipped.
 	for _, h := range []struct {
 		name string
 		f    func(string) uint64
 	}{{"FNV-1a", fnv64}, {"MD5", nil}} {
 		for _, vn := range []int{1, 8, 64, 256} {
-			var r *store.Ring
+			var r *ring.Ring
 			if h.f == nil {
-				r = store.NewRing(ids, vn)
+				r = ring.NewRing(ids, vn)
 			} else {
-				r = store.NewRingWithHash(ids, vn, h.f)
+				r = ring.NewRingWithHash(ids, vn, h.f)
 			}
 			// Count replicas, not primaries: storage and request load follow
 			// every node in the preference list, not just the first.

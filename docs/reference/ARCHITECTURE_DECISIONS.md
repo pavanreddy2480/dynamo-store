@@ -75,11 +75,11 @@ Each node is both a **replica**, which stores sibling sets, and a **coordinator*
 |---|---|---|
 | `vclock/` | Vector clocks: `Compare`, `Merge`, `Increment`, `Descends` | none |
 | `store/version.go`, `store/merge.go` | `Version`, `Dot`, dominance rules, sibling merge, LWW, clock modes | `vclock` |
-| `store/network.go` | Message delivery, latency model, partitions, slow nodes, failure-detector view | none |
-| `store/ring.go` | Consistent hashing, preference lists, fallback order | none |
+| `network/network.go` | Message delivery, latency model, partitions, slow nodes, failure-detector view | none |
+| `ring/ring.go` | Consistent hashing, preference lists, fallback order | none |
 | `store/messages.go`, `store/node.go`, `store/coordinator.go`, `store/repair.go` | Messages, replica storage, coordinator logic and read repair, hinted handoff and anti-entropy | all of the above |
 | `store/cluster.go`, `store/client.go` | Cluster wiring, `Client` API, coordinator selection | node, ring, network |
-| `store/scenario.go`, `store/resolver.go` | The partition, update, heal and verify scenario, and the `UnionResolver` rule | cluster |
+| `scenario/scenario.go`, `store/resolver.go` | The partition, update, heal and verify scenario, and the `UnionResolver` rule | cluster |
 | `cmd/demo` | Prints the partition scenario under 5 configurations | store |
 | `cmd/bench` | E1–E3: quorum sweep, concurrent updates, partition availability | store |
 | `cmd/archbench` | A1–A5: experiments behind the architecture decisions | store |
@@ -88,14 +88,14 @@ Each node is both a **replica**, which stores sibling sets, and a **coordinator*
 
 ## 3. Components
 
-### 3.1 Network (`store/network.go`)
+### 3.1 Network (`network/network.go`)
 
 * `Send(ctx, from, to, req)` starts a goroutine that sleeps for a sampled one-way delay, delivers the request to the handler, sleeps again, and delivers the reply. The caller `select`s on the reply or `ctx.Done()`.
 * **Latency model.** Replica-to-replica hops take `0.4ms + Exp(mean 0.8ms)`, and 3% of messages get an extra +5ms (a heavy tail). Client-to-node hops take `0.1ms + Exp(0.1ms)` (the client sits in the same zone as the node). `SetSlow(id, d)` adds delay to every message to or from one node.
 * **Partitions.** Every endpoint is in a group. A message whose sender and receiver are in different groups at delivery time is **dropped silently**, and so is a reply in the same situation.
 * **Failure detector.** `Reachable(a, b)` gives each node an exact view of who is reachable, standing in for Dynamo's gossip-based detector.
 
-### 3.2 Ring (`store/ring.go`)
+### 3.2 Ring (`ring/ring.go`)
 
 * Each node places 64 tokens (`MD5("n3#17")`, ...) on a 64-bit ring.
 * `Walk(key)` starts at `MD5(key)`, moves clockwise, and returns every physical node once. The first N=3 are the **preference list**; the rest are **fallbacks** in the order sloppy quorums use them.

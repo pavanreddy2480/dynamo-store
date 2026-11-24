@@ -49,22 +49,22 @@ dynamo-store/
 ├── README.md
 ├── go.mod
 ├── vclock/             vector clocks: compare, merge, increment
-├── store/              the store itself (library)
+├── ring/               consistent hashing: fixed partitions (and random vnodes), preference lists
+├── network/            simulated network: latency model, partitions, slow nodes
+├── merkle/             the hash tree kept for each partition
+├── store/              the replicated store itself
 │   ├── doc.go            package overview
 │   ├── version.go        versions, dots, conflict policies, clock modes
 │   ├── merge.go          ordering rules: supersedes, sibling merge, last-writer-wins
-│   ├── ring.go           fixed partitions (and random vnodes), preference lists
-│   ├── network.go        simulated network: latency, partitions, slow nodes
 │   ├── messages.go       request and response messages
 │   ├── node.go           replica state, request dispatch, background loops
 │   ├── coordinator.go    quorum reads and writes, sloppy fallbacks, read repair
 │   ├── repair.go         hinted handoff
-│   ├── merkle.go         per-partition Merkle tree
 │   ├── antientropy.go    Merkle (and full-state) anti-entropy exchange
 │   ├── client.go         Client: R and W, Get, Put, GetResolved
 │   ├── resolver.go       UnionResolver, the declared merge rule
-│   ├── cluster.go        cluster setup, default configuration, replica timeout
-│   └── scenario.go       the partition-and-reconcile scenario
+│   └── cluster.go        cluster setup, default configuration, replica timeout, AddNode
+├── scenario/           the partition-and-reconcile scenario used by the demo and tests
 ├── cmd/                the programs
 │   ├── demo/             the partition story
 │   ├── bench/            experiments E1 to E3, and X1 to X8 with -ablate

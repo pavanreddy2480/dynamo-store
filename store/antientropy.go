@@ -26,7 +26,11 @@ package store
 
 import (
 	"context"
+	"hash/fnv"
+	"strconv"
 	"sync/atomic"
+
+	"dynamostore/merkle"
 )
 
 // SyncMode selects the anti-entropy strategy.
@@ -133,16 +137,16 @@ func (nd *Node) put(k string, vs []Version) {
 	}
 	t := nd.trees[p]
 	if t == nil {
-		t = newMerkle(nd.cfg.MerkleDepth)
+		t = merkle.New(nd.cfg.MerkleDepth)
 		nd.trees[p] = t
 	}
-	t.set(k, h, hashVersions(k, vs))
+	t.Set(k, h, hashVersions(k, vs))
 }
 
 // sharedWith lists the partitions that both this node and peer replicate.
 func (nd *Node) sharedWith(peer string) []int {
 	var out []int
-	for p := range nd.ring.Load().plists {
+	for p := 0; p < nd.ring.Load().Partitions(); p++ {
 		if pl := nd.ring.Load().PartitionList(p, nd.cfg.N); contains(pl, nd.ID) && contains(pl, peer) {
 			out = append(out, p)
 		}
@@ -217,7 +221,7 @@ func (nd *Node) handleMerkle(r merkleReq) merkleResp {
 	defer nd.mu.Unlock()
 	var diff []nodeRef
 	for i, ref := range r.Refs {
-		if nd.trees[ref.P].hash(ref.I) != r.Hashes[i] {
+		if nd.trees[ref.P].Hash(ref.I) != r.Hashes[i] {
 			diff = append(diff, ref)
 		}
 	}
@@ -232,7 +236,7 @@ func (nd *Node) handleLeaf(r leafReq) leafResp {
 	defer nd.mu.Unlock()
 	resp := leafResp{Items: map[string][]Version{}}
 	for _, leaf := range r.Leaves {
-		for k, h := range nd.trees[leaf.P].leafKeys(leaf.I) {
+		for k, h := range nd.trees[leaf.P].LeafKeys(leaf.I) {
 			if r.Keys[k] != h {
 				resp.Items[k] = cloneVersions(nd.data[k])
 			}
@@ -255,7 +259,7 @@ func (nd *Node) handleLeaf(r leafReq) leafResp {
 //   - peer: the node to synchronise with.
 //
 // Returns:
-//   - error: nil on success; ErrTimeout if a request or reply was lost or
+//   - error: nil on success; network.ErrTimeout if a request or reply was lost or
 //     late. An interrupted exchange is harmless: whatever was absorbed is
 //     merged, and the next round finishes the job.
 func (nd *Node) syncWith(peer string) error {
@@ -302,7 +306,7 @@ func (nd *Node) merkleSync(peer string) error {
 		nd.mu.Lock()
 		hs := make([]uint64, len(refs))
 		for i, ref := range refs {
-			hs[i] = nd.trees[ref.P].hash(ref.I)
+			hs[i] = nd.trees[ref.P].Hash(ref.I)
 		}
 		nd.mu.Unlock()
 		resp, err := nd.send(peer, merkleReq{Refs: refs, Hashes: hs})
@@ -351,7 +355,7 @@ func (nd *Node) leafSync(peer string, leaves []nodeRef) error {
 	nd.mu.Lock()
 	keys := map[string]uint64{}
 	for _, leaf := range leaves {
-		for k, h := range nd.trees[leaf.P].leafKeys(leaf.I) {
+		for k, h := range nd.trees[leaf.P].LeafKeys(leaf.I) {
 			keys[k] = h
 		}
 	}
@@ -384,4 +388,32 @@ func (nd *Node) leafSync(peer string, leaves []nodeRef) error {
 	}
 	nd.stats.add(0, push, 0)
 	return nil
+}
+
+// hashVersions hashes a key together with its canonical sibling set.
+//
+// Two replicas holding the same versions for a key get the same hash,
+// because merge keeps sibling sets sorted and VC.String is sorted by node.
+//
+// Parameters:
+//   - key: the key; included so equal sets under different keys differ.
+//   - vs: the key's sibling set, in canonical order.
+//
+// Returns:
+//   - uint64: a non-zero hash, or 0 when vs is empty (the key is absent).
+func hashVersions(key string, vs []Version) uint64 {
+	if len(vs) == 0 {
+		return 0
+	}
+	f := fnv.New64a()
+	f.Write([]byte(key))
+	for _, v := range vs {
+		f.Write([]byte{0})
+		f.Write([]byte(v.Value))
+		f.Write([]byte(v.Dot.Node + ":" + strconv.FormatUint(v.Dot.Counter, 10) + v.Ctx.String() + strconv.FormatInt(v.TS, 10)))
+	}
+	if h := f.Sum64(); h != 0 {
+		return h
+	}
+	return 1
 }
