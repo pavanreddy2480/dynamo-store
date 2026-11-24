@@ -2,15 +2,35 @@
 
 This is the "explain it like I'm 5" companion to [ARCHITECTURE.md](ARCHITECTURE.md) (how it is built) and [REPORT.md](REPORT.md) (results). The detailed tables live in [docs/ABLATIONS.md](docs/ABLATIONS.md) and [docs/DECISIONS_AUDIT.md](docs/DECISIONS_AUDIT.md); every chart is in `results/`.
 
+## Contents
+
+0. [What is an ablation?](#0-what-is-an-ablation)
+1. [The one picture to remember](#1-the-one-picture-to-remember)
+2. [Part A: never lose a shopping-cart item](#2-part-a-never-lose-a-shopping-cart-item)
+3. [Part B: how strict should reads and writes be?](#3-part-b-how-strict-should-reads-and-writes-be)
+4. [Part C: where does each key live?](#4-part-c-where-does-each-key-live)
+5. [Part D: fixing copies that drifted apart](#5-part-d-fixing-copies-that-drifted-apart)
+6. [Part E: when the network misbehaves](#6-part-e-when-the-network-misbehaves)
+7. [The final recipe](#7-the-final-recipe)
+8. [Honest limits](#8-honest-limits)
+9. [Re-run everything](#9-re-run-everything)
+10. [Glossary](#10-glossary)
+
+---
+
 ## 0. What is an ablation?
 
 An ablation is a fair fight between two choices.
 
+<div align="center">
+
 ```
-   choice A  ----+
+   choice A  ----+                                                   
                  +--> same test, same machine --> compare the numbers
-   choice B  ----+
+   choice B  ----+                                                   
 ```
+
+</div>
 
 We change **one thing at a time**, keep everything else fixed, and measure. If the number moves, the choice matters. If it does not move, the choice does not matter and we pick the simpler one. Each run is repeated 3 times; the numbers in brackets are the lowest and highest run, so you can see how noisy it is (very little: about 0.4 points).
 
@@ -20,12 +40,16 @@ The system is a toy cluster inside one program: 5 nodes, every key copied to 3 o
 
 A client stores a shopping cart. The cart is copied to 3 nodes. To write, we wait for **W** nodes to say "got it". To read, we ask and wait for **R** nodes to answer.
 
+<div align="center">
+
 ```
- client --put--> [ node A ] [ node B ] [ node C ]     N = 3 copies
-                    ok         ok        (slow)       W = 2 -> done after 2 acks
- client <-get--  [ node A ] [ node B ] [ node C ]
+ client --put--> [ node A ] [ node B ] [ node C ]     N = 3 copies                    
+                    ok         ok        (slow)       W = 2 -> done after 2 acks      
+ client <-get--  [ node A ] [ node B ] [ node C ]                                     
                     ok         ok                     R = 2 -> read 2, take the newest
 ```
+
+</div>
 
 If **R + W > N** the read group and the write group must overlap, so a read always sees the latest write. If R + W <= N they can miss each other and you may read an old value ("stale").
 
@@ -35,14 +59,22 @@ Everything below is about the questions that come next: where do keys live, what
 
 ## 2. Part A: Never lose a shopping-cart item
 
+**The story.** You and your partner both add things to the same shopping list at the same moment, on two different phones that cannot talk. When the phones reconnect, nobody wants an item to vanish.
+
+**The real version.** The choices below decide whether the store keeps or drops writes that happen at the same time.
+
 ### A1. Which kind of clock? (dotted version vectors vs plain vector clocks)
 
 A clock says "this write happened after that one" or "these two happened at the same time". Plain per-node clocks sometimes cannot tell two writes that went through the same node apart, so one gets thrown away.
 
+<div align="center">
+
 ```
- plain clock:   two carts written at once on node A  -->  "one is older"  -->  one cart DELETED
+ plain clock:   two carts written at once on node A  -->  "one is older"  -->  one cart DELETED     
  dotted clock:  each write gets its own tag (A,7)    -->  "both are new"   -->  both KEPT (siblings)
 ```
+
+</div>
 
 Test: 8 clients add items to one cart at the same time (experiment A2).
 * dotted version vector: **0%** of acknowledged items lost
@@ -69,6 +101,10 @@ Effect: LWW is only kept as a comparison.
 ---
 
 ## 3. Part B: How strict should reads and writes be?
+
+**The story.** You keep 3 notebook copies. Before you trust an answer, how many friends must you ask? Ask one and it is quick but maybe old. Ask two and it is surer but slower.
+
+**The real version.** R and W are that number of friends for reads and writes. The tests below show what each setting costs and buys.
 
 ### B1. The R and W dial (experiment E1)
 
@@ -102,10 +138,14 @@ Decision: N=3, 5 nodes, as in the Dynamo paper.
 
 ### B4. Ask all N replicas and take the first R? Or ask only R? (X7)
 
+<div align="center">
+
 ```
- ask all 3, use the first R answers        ask only R
+ ask all 3, use the first R answers        ask only R                                 
    fast: a slow node is simply ignored       slow node in the group -> you wait for it
 ```
+
+</div>
 * Ask only R: 15% fewer messages, but read p99 doubles (5.1 to 10.7 ms), and with a slow replica 9.8 to 20.0 ms.
 
 Decision: keep asking all N. Speed beats a few saved messages.
@@ -122,10 +162,14 @@ Why the first is fresher: all writes to a key go through the same node, so it se
 
 When the right replicas are unreachable, a **sloppy** quorum lets a stand-in node accept the write and hand it over later ("hinted handoff"). A **strict** quorum just says no.
 
+<div align="center">
+
 ```
- strict:  node dead -> write refused         (always consistent, less available)
+ strict:  node dead -> write refused         (always consistent, less available)           
  sloppy:  node dead -> stand-in takes it     (always available, may be stale until handoff)
 ```
+
+</div>
 * strict R=W=2 stale reads: **0%**; sloppy R=W=2: **87% to 92%** stale during a partition
 * availability when the cluster is split in two (X8, strict vs sloppy): 1 vs 4 nodes 72.8% vs 82.0%; 2 vs 3 nodes 48.5% vs 100%; three-way split 26.0% vs 88.9%
 
@@ -135,16 +179,24 @@ Decision: strict by default (correct first), sloppy opt-in per client.
 
 ## 4. Part C: Where does each key live?
 
+**The story.** You have 5 friends and many shopping lists. You need a rule that says which 3 friends hold which list, that spreads lists evenly, and that does not reshuffle everything when a new friend joins.
+
+**The real version.** This is the consistent-hash ring and its partitions.
+
 ### C1. The ring
 
 Imagine a clock face. Each key is hashed to a spot on the clock and stored on the next 3 nodes clockwise.
 
+<div align="center">
+
 ```
-            0
-        n1  .  n2
+            0                                                 
+        n1  .  n2                                             
       n5   KEY>>>   n3      key lands here, goes to n3, n4, n5
-        n4  .  n5
+        n4  .  n5                                             
 ```
+
+</div>
 
 ### C2. Which hash function? (A1)
 
@@ -154,10 +206,14 @@ Keys should spread evenly. We measured how uneven (smaller is better): MD5 gave 
 
 Each node can own many small random slices of the clock (virtual nodes), or the clock can be cut into **equal pieces** (partitions) dealt out to the nodes.
 
+<div align="center">
+
 ```
  random vnodes:   |a|bb|c|aaa|b|cc|a|      unequal luck, some nodes get more
- fixed pieces:    |a|b|c|a|b|c|a|b|c|      equal and predictable
+ fixed pieces:    |a|b|c|a|b|c|a|b|c|      equal and predictable            
 ```
+
+</div>
 * 64 random vnodes per node: max-minus-min share is about **10 points** (one node 10 points more loaded than another), and a joining node moves 22.1% of copies.
 * 256 fixed partitions: spread about **1 point**, and a joining node moves 19.9% of copies (the ideal is 20%).
 * The old choice of 64 vnodes came from a coarse test. The finer sweep (A1b, 11 counts) shows 64 is acceptable but not best: imbalance falls with the square root of the vnode count.
@@ -188,13 +244,21 @@ Decision: modulo is rejected, now with a measurement.
 
 ## 5. Part D: Fixing copies that drifted apart
 
+**The story.** While a friend was away, the other two notebooks got new items. When the friend returns, someone must bring their notebook up to date, without re-reading every page of every notebook.
+
+**The real version.** These are the three repair tools and the Merkle trees that make comparing cheap.
+
 Copies drift apart when a node is down or cut off. Three repair tools, each with a different job:
+
+<div align="center">
 
 ```
  hinted handoff : a stand-in kept the write, now hands it to the right node
- read repair    : a read notices an old copy and fixes it on the spot
- anti-entropy   : two nodes compare everything and fix every difference
+ read repair    : a read notices an old copy and fixes it on the spot      
+ anti-entropy   : two nodes compare everything and fix every difference    
 ```
+
+</div>
 
 ### D1. Do we need all three? (A3)
 
@@ -214,13 +278,17 @@ Only the pair reaches zero, so the default has both.
 
 Naive way: send everything and compare. Merkle way: each node keeps a **tree of fingerprints**. Compare the top fingerprint; if it matches, stop; if not, go one level down only where fingerprints differ.
 
+<div align="center">
+
 ```
-        [top]              same?  -> done, nothing sent
-       /     \
-    [L]       [R]          differ -> look inside only that side
-    / \       / \
+        [top]              same?  -> done, nothing sent          
+       /     \                                                   
+    [L]       [R]          differ -> look inside only that side  
+    / \       / \                                                
   [a] [b]   [c] [d]        differ -> send just the keys under [c]
 ```
+
+</div>
 20,000 keys, one round over 10 node pairs:
 
 | how many keys differ | full-state sends | Merkle sends |
@@ -239,10 +307,14 @@ Merkle sends 97% fewer bytes at 1% difference. Honest cost: it needs more round 
 
 ### D4. Walk the tree one level at a time, or fetch it all at once? (A10)
 
+<div align="center">
+
 ```
  level by level: ask, answer, ask, answer ...     (more trips, fewer bytes)
  whole tree:     ask once, get everything         (fewer trips, more bytes)
 ```
+
+</div>
 At depth 4: 70 round trips vs 40, but the whole-tree version sends **52% more bytes** at 1% difference (229 vs 151 KB). Decision: level by level; bytes are the scarce resource.
 
 ### D5. How often should anti-entropy run on its own? (X3)
@@ -273,6 +345,10 @@ While testing D6 the hand-over **never finished** once a node held about 15 or m
 ---
 
 ## 6. Part E: When the network misbehaves
+
+**The story.** You phone a friend and nobody answers. How long do you wait before assuming the line is cut? And what if you wrongly think a friend is gone?
+
+**The real version.** These are the timeout, the failure detector, and different ways the network can split.
 
 ### E1. How long to wait for a replica before giving up? (A5, X2)
 
@@ -328,3 +404,21 @@ go run ./cmd/bench -ablate    # X1-X8  -> results/ablations.md
 go run ./cmd/archbench        # A1-A10 -> results/architecture.md
 go run ./cmd/plots            # redraw charts
 ```
+
+## 10. Glossary
+
+| word | plain meaning |
+|---|---|
+| replica | one of the 3 copies of a key |
+| N, R, W | copies per key, how many to ask when reading, how many must confirm a write |
+| stale read | a read that returns an older value than the latest write |
+| quorum | the group of R or W nodes you wait for |
+| sibling | one of several conflicting versions kept side by side |
+| vector clock / dot | a tag that says which writes a version has seen |
+| coordinator | the node that runs one read or write |
+| hinted handoff | a stand-in holds a write for a down node and hands it over later |
+| read repair | fixing an old copy when a read notices it |
+| anti-entropy | two nodes compare and fix every difference |
+| Merkle tree | a tree of fingerprints that finds differences without sending everything |
+| partition (ring) | one of the equal pieces of the key space; also, in networks, a split cluster |
+| false suspicion | wrongly believing a healthy node is down |
