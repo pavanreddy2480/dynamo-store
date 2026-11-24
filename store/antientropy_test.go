@@ -138,7 +138,23 @@ func fastConfig(mode SyncMode, lazy bool) Config {
 	cfg.Node.HandoffInterval = 0
 	cfg.Latency = LatencyModel{Base: 50 * time.Microsecond}
 	cfg.Client = cfg.Latency
+	// Anti-entropy is the only traffic, but -race can stall a goroutine for
+	// tens of milliseconds; a timed-out exchange would look like a bug.
+	cfg.Node.ReplicaTimeout = 5 * time.Second
 	return cfg
+}
+
+// syncRound runs one anti-entropy round like Cluster.AntiEntropy but fails
+// t on any exchange error instead of ignoring it.
+func syncRound(t *testing.T, c *Cluster) {
+	t.Helper()
+	for i, a := range c.IDs {
+		for _, b := range c.IDs[i+1:] {
+			if err := c.Nodes[a].syncWith(b); err != nil {
+				t.Fatalf("sync %s-%s: %v", a, b, err)
+			}
+		}
+	}
 }
 
 // Property: from any random divergent state, one Merkle anti-entropy round
@@ -151,14 +167,14 @@ func TestMerkleSyncMatchesFullStateSync(t *testing.T) {
 			full, mk := NewCluster(fastConfig(FullStateSync, false)), NewCluster(fastConfig(MerkleSync, v.lazy))
 			want := seedDivergent(t, seed, 300, full, mk)
 			checkTreesMatchData(t, mk)
-			full.AntiEntropy()
-			mk.AntiEntropy()
+			syncRound(t, full)
+			syncRound(t, mk)
 			label := fmt.Sprintf("%s seed %d", v.name, seed)
 			checkConverged(t, full, want, label+" full-state")
 			checkConverged(t, mk, want, label+" merkle")
 			checkTreesMatchData(t, mk)
 			before := mk.SyncStats()
-			mk.AntiEntropy()
+			syncRound(t, mk)
 			after := mk.SyncStats()
 			if after.Keys != before.Keys || after.RoundTrips-before.RoundTrips != 10 {
 				t.Fatalf("%s: converged round sent %d keys in %d round trips, want 0 keys in 10 (one per pair)",
