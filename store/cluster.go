@@ -7,6 +7,7 @@ package store
 
 import (
 	"fmt"
+	"sync/atomic"
 	"time"
 )
 
@@ -62,11 +63,12 @@ func DefaultConfig() Config {
 // Create one with NewCluster, talk to it through clients from NewClient,
 // and call Close when done to stop the nodes' background loops.
 type Cluster struct {
-	Net   *Network         // message bus between nodes and clients
-	Ring  *Ring            // consistent-hash ring placing keys on nodes
-	Nodes map[string]*Node // by node id
-	IDs   []string         // node ids in a fixed order
-	cfg   Config           // configuration the cluster was built from
+	Net   *Network             // message bus between nodes and clients
+	Ring  *Ring                // ring at creation or after the last AddNode; use PreferenceList for the live ring
+	Nodes map[string]*Node     // by node id
+	IDs   []string             // node ids in a fixed order
+	cfg   Config               // configuration the cluster was built from
+	ringP atomic.Pointer[Ring] // the live ring, shared with clients and swapped by AddNode
 }
 
 // NewCluster builds and starts a cluster.
@@ -99,6 +101,7 @@ func NewCluster(cfg Config) *Cluster {
 		IDs:   ids,
 		cfg:   cfg,
 	}
+	c.ringP.Store(ring)
 	c.Net.SetFalseSuspicion(cfg.FalseSuspicion)
 	for _, id := range ids {
 		c.Nodes[id] = newNode(id, cfg.Node, c.Net, c.Ring)
@@ -107,6 +110,38 @@ func NewCluster(cfg Config) *Cluster {
 		nd.start()
 	}
 	return c
+}
+
+// AddNode adds one node to the running cluster and returns its id.
+//
+// The new node is named after the current node count (n6 for a cluster of
+// five) and takes about 1/(n+1) of the ring's partitions from the existing
+// nodes (Ring.WithNode). It starts empty: its data arrives through
+// anti-entropy, so until that has run, a read quorum that includes the new
+// node can miss writes (experiment X11 measures this window).
+//
+// Only fixed-partition rings (Config.Partitions > 0) support joining. Client
+// requests may run concurrently, but AddNode must not run concurrently with
+// other Cluster methods.
+//
+// Returns:
+//   - string: the id of the new node.
+func (c *Cluster) AddNode() string {
+	if c.cfg.Partitions == 0 {
+		panic("store: AddNode needs a fixed-partition ring")
+	}
+	id := fmt.Sprintf("n%d", len(c.IDs)+1)
+	ring := c.ringP.Load().WithNode(id)
+	nd := newNode(id, c.cfg.Node, c.Net, ring)
+	c.Nodes[id] = nd
+	c.IDs = append(c.IDs, id)
+	c.Ring = ring
+	c.ringP.Store(ring)
+	for _, n := range c.Nodes {
+		n.ring.Store(ring)
+	}
+	nd.start()
+	return id
 }
 
 // SetSkew changes one node's wall-clock skew (used by LWW experiments).
@@ -142,7 +177,7 @@ func (c *Cluster) Close() {
 // Returns:
 //   - []string: the ids of the N nodes responsible for key, in ring order.
 func (c *Cluster) PreferenceList(key string) []string {
-	return c.Ring.PreferenceList(key, c.cfg.Node.N)
+	return c.ringP.Load().PreferenceList(key, c.cfg.Node.N)
 }
 
 // AntiEntropy runs one round of pairwise synchronisation between every pair
@@ -220,7 +255,7 @@ func (c *Cluster) NewClient(id string, r, w int) *Client {
 	return &Client{
 		ID: id, R: r, W: w,
 		Timeout: 3 * c.cfg.Node.ReplicaTimeout,
-		net:     c.Net, ring: c.Ring, n: c.cfg.Node.N,
+		net:     c.Net, ring: &c.ringP, n: c.cfg.Node.N,
 	}
 }
 

@@ -33,7 +33,7 @@ type target struct {
 // Returns:
 //   - []target: exactly N destinations, in preference-list order.
 func (nd *Node) targets(key string, sloppy bool) []target {
-	walk := nd.ring.Walk(key)
+	walk := nd.ring.Load().Walk(key)
 	n := nd.cfg.N
 	pref := walk[:n]
 	out := make([]target, 0, n)
@@ -135,7 +135,7 @@ func (nd *Node) coordPut(r coordPutReq) coordPutResp {
 	} else {
 		// Not a replica for this key (sloppy fallback): keep the write as a
 		// hint for the first preferred node so it is never lost here.
-		owner := nd.ring.PreferenceList(r.Key, nd.cfg.N)[0]
+		owner := nd.ring.Load().PreferenceList(r.Key, nd.cfg.N)[0]
 		if nd.hints[owner] == nil {
 			nd.hints[owner] = map[string][]Version{}
 		}

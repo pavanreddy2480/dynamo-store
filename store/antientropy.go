@@ -127,8 +127,8 @@ func (nd *Node) put(k string, vs []Version) {
 	if nd.cfg.AntiEntropy != MerkleSync {
 		return
 	}
-	p, h := nd.ring.Partition(k)
-	if !contains(nd.ring.PartitionList(p, nd.cfg.N), nd.ID) {
+	p, h := nd.ring.Load().Partition(k)
+	if !contains(nd.ring.Load().PartitionList(p, nd.cfg.N), nd.ID) {
 		return
 	}
 	t := nd.trees[p]
@@ -142,8 +142,8 @@ func (nd *Node) put(k string, vs []Version) {
 // sharedWith lists the partitions that both this node and peer replicate.
 func (nd *Node) sharedWith(peer string) []int {
 	var out []int
-	for p := range nd.ring.plists {
-		if pl := nd.ring.PartitionList(p, nd.cfg.N); contains(pl, nd.ID) && contains(pl, peer) {
+	for p := range nd.ring.Load().plists {
+		if pl := nd.ring.Load().PartitionList(p, nd.cfg.N); contains(pl, nd.ID) && contains(pl, peer) {
 			out = append(out, p)
 		}
 	}
@@ -179,7 +179,7 @@ func (nd *Node) itemsFor(peer string) map[string][]Version {
 	defer nd.mu.Unlock()
 	out := map[string][]Version{}
 	for k, vs := range nd.data {
-		if contains(nd.ring.PreferenceList(k, nd.cfg.N), peer) {
+		if contains(nd.ring.Load().PreferenceList(k, nd.cfg.N), peer) {
 			out[k] = cloneVersions(vs)
 		}
 	}

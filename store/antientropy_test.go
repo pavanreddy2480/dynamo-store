@@ -109,8 +109,8 @@ func checkTreesMatchData(t *testing.T, c *Cluster) {
 		nd.mu.Lock()
 		fresh := map[int]*merkle{}
 		for k, vs := range nd.data {
-			p, h := nd.ring.Partition(k)
-			if !contains(nd.ring.PartitionList(p, nd.cfg.N), nd.ID) {
+			p, h := nd.ring.Load().Partition(k)
+			if !contains(nd.ring.Load().PartitionList(p, nd.cfg.N), nd.ID) {
 				continue
 			}
 			if fresh[p] == nil {

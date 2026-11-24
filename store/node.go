@@ -54,10 +54,10 @@ type NodeConfig struct {
 // the network, so a node keeps answering requests while requests it
 // coordinates are in flight.
 type Node struct {
-	ID   string     // node id, e.g. "n1"; also its network endpoint id
-	cfg  NodeConfig // replica settings (ClockSkew is guarded by mu)
-	net  *Network   // network the node is registered on
-	ring *Ring      // shared ring used to compute preference lists
+	ID   string               // node id, e.g. "n1"; also its network endpoint id
+	cfg  NodeConfig           // replica settings (ClockSkew is guarded by mu)
+	net  *Network             // network the node is registered on
+	ring atomic.Pointer[Ring] // shared ring used to compute preference lists; swapped when a node joins
 
 	mu     sync.Mutex                      // guards data, hints, issued, trees and cfg.ClockSkew
 	data   map[string][]Version            // key -> sibling set for keys this node owns
@@ -95,13 +95,14 @@ func (nd *Node) Coordinated() int64 { return nd.coordinated.Load() }
 //   - *Node: the registered node, not yet started.
 func newNode(id string, cfg NodeConfig, net *Network, ring *Ring) *Node {
 	nd := &Node{
-		ID: id, cfg: cfg, net: net, ring: ring,
+		ID: id, cfg: cfg, net: net,
 		data:   map[string][]Version{},
 		hints:  map[string]map[string][]Version{},
 		issued: map[string]uint64{},
 		trees:  map[int]*merkle{},
 		stop:   make(chan struct{}),
 	}
+	nd.ring.Store(ring)
 	net.Register(id, nd.handle)
 	return nd
 }
@@ -134,7 +135,7 @@ func (nd *Node) start() {
 	}
 	loop(nd.cfg.HandoffInterval, nd.handoffHints)
 	loop(nd.cfg.AntiEntropyInterval, func() {
-		peers := nd.ring.nodes
+		peers := nd.ring.Load().nodes
 		if p := peers[rand.Intn(len(peers))]; p != nd.ID && nd.net.Reachable(nd.ID, p) {
 			_ = nd.syncWith(p)
 		}

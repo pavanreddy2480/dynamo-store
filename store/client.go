@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"sync/atomic"
 	"time"
 
 	"dynamostore/vclock"
@@ -30,9 +31,9 @@ type Client struct {
 	// replica instead of a random one (compared in cmd/archbench).
 	FirstCoordinator bool
 
-	net  *Network // network the client sends on
-	ring *Ring    // ring used to find a key's replicas
-	n    int      // replicas per key
+	net  *Network              // network the client sends on
+	ring *atomic.Pointer[Ring] // the cluster's live ring (replaced when a node joins)
+	n    int                   // replicas per key
 }
 
 // GetResult holds every concurrent version found plus the context (merged
@@ -68,7 +69,7 @@ func (g GetResult) Values() []string {
 //     reachable from this client.
 func (cl *Client) coordinator(key string) (string, error) {
 	if cl.FirstCoordinator {
-		for _, id := range cl.ring.PreferenceList(key, cl.n) {
+		for _, id := range cl.ring.Load().PreferenceList(key, cl.n) {
 			if cl.net.Reachable(cl.ID, id) {
 				return id, nil
 			}
@@ -77,7 +78,7 @@ func (cl *Client) coordinator(key string) (string, error) {
 		// fallback below still applies.
 	}
 	var live []string
-	for _, id := range cl.ring.PreferenceList(key, cl.n) {
+	for _, id := range cl.ring.Load().PreferenceList(key, cl.n) {
 		if cl.net.Reachable(cl.ID, id) {
 			live = append(live, id)
 		}
@@ -88,7 +89,7 @@ func (cl *Client) coordinator(key string) (string, error) {
 	if cl.Sloppy {
 		// Walk starts with the (unreachable) preferred replicas, so the
 		// first reachable entry is the nearest fallback on the ring.
-		for _, id := range cl.ring.Walk(key) {
+		for _, id := range cl.ring.Load().Walk(key) {
 			if cl.net.Reachable(cl.ID, id) {
 				return id, nil
 			}
