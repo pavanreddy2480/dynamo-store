@@ -11,7 +11,7 @@ A Dynamo-inspired replicated key-value store in Go, simulated in one process, wi
 
 The [`real-network-and-wal`](https://github.com/pavanreddy2480/dynamo-store/tree/real-network-and-wal) branch extends this with each node as its own process over TCP in Docker (iptables partitions) and a write-ahead log for crash recovery.
 
-See [REPORT.md](REPORT.md) for the results and [ARCHITECTURE.md](ARCHITECTURE.md) for the design and the reasons behind each decision.
+See [REPORT.md](REPORT.md) for the results, [ARCHITECTURE.md](ARCHITECTURE.md) for the design explained from zero, [MESSAGES.md](MESSAGES.md) for every message, [ARCHITECTURE_DECISIONS.md](ARCHITECTURE_DECISIONS.md) for the numbered decisions and their evidence, and [ABLATION.md](ABLATION.md) for the tests behind each choice.
 
 ## Run
 

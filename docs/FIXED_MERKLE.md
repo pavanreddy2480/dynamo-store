@@ -41,4 +41,4 @@ The depth was picked by sweep (A6): at 1% divergence KB sent falls from 496 (dep
 
 ## What the results now show on this default
 
-Results were regenerated on this ring (`go run ./cmd/bench`, `go run ./cmd/archbench`, `go run ./cmd/plots`). E1 to E3 and A1 to A5 shift by a few points with the different key placement (see the note at the top of ARCHITECTURE.md); the conclusions are unchanged.
+Results were regenerated on this ring (`go run ./cmd/bench`, `go run ./cmd/archbench`, `go run ./cmd/plots`). E1 to E3 and A1 to A5 shift by a few points with the different key placement (see the note at the top of ARCHITECTURE_DECISIONS.md); the conclusions are unchanged.

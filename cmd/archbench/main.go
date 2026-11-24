@@ -1,5 +1,5 @@
 // Command archbench runs the experiments that justify individual
-// architecture decisions (see ARCHITECTURE.md). Results go to
+// architecture decisions (see ARCHITECTURE_DECISIONS.md). Results go to
 // results/architecture.md.
 //
 // Each experiment builds an in-process store.Cluster with simulated network
