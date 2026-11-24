@@ -128,10 +128,10 @@ func x2Latency() {
 	chart.Bar(chartPath("x2_stale.svg"), "X2 stale reads under three latency models", "R,W", "stale reads (%)", groups, names, means, false)
 
 	out("\nReplica timeout vs spurious put failures on a healthy cluster (R=W=2), same three models:\n\n| model | timeout | put failures %% |\n|---|---|---|\n")
-	tos := []time.Duration{5 * time.Millisecond, 20 * time.Millisecond, 100 * time.Millisecond}
+	tos := []time.Duration{5 * time.Millisecond, 20 * time.Millisecond, 100 * time.Millisecond, 0} // 0 = AutoTimeout
 	var tg []string
 	for _, to := range tos {
-		tg = append(tg, to.String())
+		tg = append(tg, toLabel(to))
 	}
 	fails := make([][]float64, len(latencyModels))
 	for mi, lm := range latencyModels {
@@ -140,7 +140,7 @@ func x2Latency() {
 			w.cfg.Latency, w.cfg.Client = lm.replica, lm.client
 			w.cfg.Node.ReplicaTimeout = to
 			s := measureAll(w, mPutErr)[0]
-			out("| %s | %v | %s |\n", lm.name, to, s)
+			out("| %s | %s | %s |\n", lm.name, toLabel(to), s)
 			fails[mi] = append(fails[mi], s.mean)
 		}
 	}
@@ -204,4 +204,12 @@ func x5Workload() {
 	m2, l2, h2 := column(b)
 	chart.BarErr(chartPath("x5_workload.svg"), "X5 stale reads by workload shape", "workload", "stale reads (%)", short, []string{"R=W=1", "R=1,W=2"}, [][]float64{m1, m2}, [][]float64{l1, l2}, [][]float64{h1, h2}, false)
 	out("\n![workload](x5_workload.svg)\n")
+}
+
+// toLabel names a replica timeout; zero is the latency-derived default.
+func toLabel(to time.Duration) string {
+	if to == 0 {
+		return "auto"
+	}
+	return to.String()
 }

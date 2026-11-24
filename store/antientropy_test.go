@@ -133,6 +133,7 @@ func fastConfig(mode SyncMode) Config {
 	cfg := DefaultConfig()
 	cfg.Node.AntiEntropy = mode
 	cfg.Node.HandoffInterval = 0
+	cfg.Node.AntiEntropyInterval = 0
 	cfg.Latency = LatencyModel{Base: 50 * time.Microsecond}
 	cfg.Client = cfg.Latency
 	// Anti-entropy is the only traffic, but -race can stall a goroutine for
@@ -192,6 +193,7 @@ func TestMerkleRepairsPartition(t *testing.T) {
 		cfg := DefaultConfig()
 		cfg.Node.AntiEntropy = mode
 		cfg.Node.HandoffInterval = 0
+		cfg.Node.AntiEntropyInterval = 0
 		c := NewCluster(cfg)
 		var mu sync.Mutex
 		acked := map[string][]Version{}

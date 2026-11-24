@@ -43,10 +43,13 @@ func DefaultConfig() Config {
 		Node: NodeConfig{
 			N:               3,
 			Policy:          KeepSiblings,
-			ReplicaTimeout:  20 * time.Millisecond,
+			ReplicaTimeout:  0, // 0 = derive from Latency (see AutoTimeout)
 			ReadRepair:      true,
 			HandoffInterval: 5 * time.Millisecond,
-			MerkleDepth:     4,
+			// Without this, replicas only converge when a sync is triggered by
+			// hand; experiment X3 shows 100 ms converges in ~0.4 s.
+			AntiEntropyInterval: 100 * time.Millisecond,
+			MerkleDepth:         4,
 		},
 		Latency: DefaultLatency,
 		Client:  DefaultClientLatency,
@@ -78,6 +81,9 @@ type Cluster struct {
 // Returns:
 //   - *Cluster: the running cluster; the caller must call Close.
 func NewCluster(cfg Config) *Cluster {
+	if cfg.Node.ReplicaTimeout == 0 {
+		cfg.Node.ReplicaTimeout = AutoTimeout(cfg.Latency)
+	}
 	ids := make([]string, cfg.Nodes)
 	for i := range ids {
 		ids[i] = fmt.Sprintf("n%d", i+1)
@@ -216,4 +222,13 @@ func (c *Cluster) NewClient(id string, r, w int) *Client {
 		Timeout: 3 * c.cfg.Node.ReplicaTimeout,
 		net:     c.Net, ring: c.Ring, n: c.cfg.Node.N,
 	}
+}
+
+// AutoTimeout returns a replica timeout for a latency model: one round trip
+// (two hops) of Base + 4 mean jitters + the slow-path extra, so a healthy
+// request almost never times out whatever the network's speed. Experiment
+// X2 showed a fixed 20 ms fails 23% of puts at 5 ms hops. Never below 1 ms.
+func AutoTimeout(l LatencyModel) time.Duration {
+	to := 2 * (l.Base + 4*l.JitterMean + l.SlowExtra)
+	return max(to, time.Millisecond)
 }

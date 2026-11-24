@@ -30,6 +30,7 @@ type syncCost struct {
 // replica only. The same seed gives the same state for any SyncMode.
 func divergedCluster(cfg store.Config, div float64) *store.Cluster {
 	cfg.Node.HandoffInterval = 0
+	cfg.Node.AntiEntropyInterval = 0
 	// Full-state messages carry the whole key space; give every exchange
 	// time to finish so the comparison is about traffic, not timeouts.
 	cfg.Node.ReplicaTimeout = 10 * time.Second

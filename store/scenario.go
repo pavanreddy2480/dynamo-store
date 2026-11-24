@@ -124,7 +124,7 @@ func RunPartitionScenario(o ScenarioOptions) ScenarioResult {
 	res.logf("side A put {%s}: %s", res.WriteA, errStr(res.ErrA))
 	res.logf("side B put {%s}: %s", res.WriteB, errStr(res.ErrB))
 
-	time.Sleep(3 * cfg.Node.ReplicaTimeout) // let in-flight replication finish
+	time.Sleep(3 * c.cfg.Node.ReplicaTimeout) // let in-flight replication finish
 	c.Net.Heal()
 	hinted := c.WaitHintsDrained(500 * time.Millisecond)
 	c.AntiEntropy()
@@ -203,7 +203,7 @@ func RunPartitionScenario(o ScenarioOptions) ScenarioResult {
 
 	// Give the reconciling write (or LWW replication) time to land, then
 	// run one more anti-entropy round before checking every replica.
-	time.Sleep(3 * cfg.Node.ReplicaTimeout)
+	time.Sleep(3 * c.cfg.Node.ReplicaTimeout)
 	c.AntiEntropy()
 	final, _ := reader.Get(key)
 	if len(final.Versions) == 1 {

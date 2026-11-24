@@ -49,6 +49,7 @@ func convergence(m repairMode) (acked, under int, divergent int) {
 	// hints stay parked on the fallback nodes.
 	if !m.handoff {
 		cfg.Node.HandoffInterval = 0
+		cfg.Node.AntiEntropyInterval = 0
 	}
 	cfg.Node.ReadRepair = m.rr
 	c := store.NewCluster(cfg)
