@@ -1,4 +1,4 @@
-// This file drives the ablation experiments: it runs X1 to X8 (or those
+// This file drives the ablation experiments: it runs X1 to X11 (or those
 // named by -only) and writes results/ablations.md.
 
 package main
@@ -20,6 +20,7 @@ func runAblations() {
 	}{
 		{"X1", x1Noise}, {"X2", x2Latency}, {"X3", x3Periodic}, {"X4", x4Cluster},
 		{"X5", x5Workload}, {"X6", x6Handoff}, {"X7", x7ReadPath}, {"X8", x8Failure},
+		{"X9", x9Growth}, {"X10", x10Mixed}, {"X11", x11Join},
 	} {
 		if *only == "" || strings.Contains(","+*only+",", ","+e.id+",") {
 			e.run()

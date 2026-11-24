@@ -42,3 +42,13 @@ Charts: `x1_noise`, `x2_stale`, `x2_timeout`, `x3_converge`, `x3_idle`, `x4_clus
 ## Code added
 
 `Network.SetFalseSuspicion` and `Sent`; `NodeConfig.AntiEntropyInterval`, `ReadFromROnly`, `MerkleOneShot`; `Config.FalseSuspicion`; `chart.BarErr` (whiskers); the `-ablate` mode of `cmd/bench`; A9 and A10 in `cmd/archbench`. All off by default, so the default behaviour is unchanged except for the handoff fix.
+
+## Round two: X9 to X11 (the gaps that were still untested)
+
+Code: `cmd/bench/x_more.go` and `Cluster.AddNode` (a node joining a live cluster). Full tables are in `results/ablations.md`; the explained version is in [the ablation guide](../guides/ABLATION.md#10-three-gaps-that-were-still-open-now-tested).
+
+| # | Question | Result |
+|---|---|---|
+| X9 | Do siblings and clocks grow without bound during a long partition? | Clocks do not: at most one entry per node (3 in the test). Siblings stay at 4 to 8 per key when clients read before writing, and one read-merge-write collapses them to 1. Clients that write blindly pile up 218 to 347 siblings per key in 2 s (346 to 513 after heal), and reading such a key from 3 replicas times out at the 17 ms replica timeout. Cap or auto-merge siblings in a production version. |
+| X10 | Do clients with different R and W in one cluster behave as the theory says? | Yes: every (key W, reader R) pair with R + W > 3 had 0.0% stale reads in all runs; pairs with R + W <= 3 were stale 0.3% to 13.0% (R=1, W=1 the worst). |
+| X11 | Is it safe to add a node to a running cluster? | Yes in this setup: 0% stale reads and 0% put failures during the join at R=W=2, no acknowledged copy lost, and the new node was full in about twice the anti-entropy interval (64 ms at 20 ms, 220 ms at 100 ms, 1.8 s at 500 ms). A theoretical window remains where a read lands on the empty new node plus an old replica that missed a write. |

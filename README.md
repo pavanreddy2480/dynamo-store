@@ -67,14 +67,14 @@ dynamo-store/
 ├── scenario/           the partition-and-reconcile scenario used by the demo and tests
 ├── cmd/                the programs
 │   ├── demo/             the partition story
-│   ├── bench/            experiments E1 to E3, and X1 to X8 with -ablate
+│   ├── bench/            experiments E1 to E3, and X1 to X11 with -ablate
 │   ├── archbench/        experiments A1 to A10 behind the architecture decisions
 │   └── plots/            redraws the charts from the result tables
 ├── chart/              small SVG chart library used by the programs
 ├── results/            generated output
 │   ├── benchmark.md      E1 to E3
 │   ├── architecture.md   A1 to A10
-│   ├── ablations.md      X1 to X8
+│   ├── ablations.md      X1 to X11
 │   ├── demo.txt          output of the demo
 │   └── charts/           one SVG per experiment
 └── docs/
@@ -89,7 +89,7 @@ dynamo-store/
 |---|---|---|
 | `go run ./cmd/bench` | **E1 to E3**: quorum sweep, concurrent updates, partitions (about 2 min) | `results/benchmark.md` |
 | `go run ./cmd/archbench` | **A1 to A10**: hash, vnodes, clocks, repair, coordinator, timeout, Merkle, fixed partitions | `results/architecture.md` |
-| `go run ./cmd/bench -ablate` | **X1 to X8**: noise, network speed, anti-entropy interval, workload, handoff, read path, failures | `results/ablations.md` |
+| `go run ./cmd/bench -ablate` | **X1 to X11**: noise, network speed, anti-entropy interval, workload, handoff, read path, failures | `results/ablations.md` |
 | `go run ./cmd/plots` | redraws the charts for E1 to E3 and A1 to A5 | `results/charts/` |
 
 Add `-only A6` (archbench) or `-only X3` (bench with `-ablate`) to run one experiment. See [docs/experiments/GRAPHS.md](docs/experiments/GRAPHS.md) for which chart belongs to which experiment.
@@ -111,7 +111,8 @@ All on the simulated network; compare numbers with each other, not with a real d
 | Branch | What it holds |
 |---|---|
 | `main` | the stable store and its first experiments |
-| `ablations` | everything above: fixed partitions, Merkle anti-entropy, background repair, computed timeout, guides, ablations X1 to X8 |
+| `organize-store` | `ablations` plus the package split (ring, network, merkle, scenario), `Cluster.AddNode`, and experiments X9 to X11 |
+| `ablations` | everything above: fixed partitions, Merkle anti-entropy, background repair, computed timeout, guides, ablations X1 to X11 |
 | `adaptive-defaults` | the same, up to the guides |
 | `fixed-merkle`, `merkle-anti-entropy`, `merkle-lazy`, `fixed-partitions` | the individual design variants, kept for comparison |
 | `real-network-and-wal` | each node as its own process over TCP in Docker, plus a write-ahead log for crash recovery |

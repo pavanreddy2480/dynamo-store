@@ -166,3 +166,43 @@ Same partition scenario as X3 (anti-entropy off). After heal, how long until eve
 
 ![suspicion](charts/x8_suspicion.svg)
 ![shapes](charts/x8_shapes.svg)
+## X9. Sibling and clock growth during a long partition
+
+Cluster split {n1,n2} | {n3,n4,n5}, R=W=1 strict, 8 hot keys, writers split over both sides, 2s of partition, then heal, three anti-entropy rounds, then one client reads and writes back every key under the merged context. Mean (min-max) of 3 runs. "Union" clients read, merge and write back (the intended use); "blind" clients write without reading, so every write is concurrent with every earlier one (the worst case).
+
+| writers | clients | max siblings per key | max clock entries | largest sibling set KB | siblings after heal + anti-entropy | after read-merge-write | keys (of 8) whose R=3 read timed out |
+|---|---|---|---|---|---|---|---|
+| 2 | union | 1.0 (1.0-1.0) | 3.0 (3.0-3.0) | 0.0 (0.0-0.0) | 2.0 (2.0-2.0) | 1.0 (1.0-1.0) | 0.0 (0.0-0.0) |
+| 2 | blind | 217.7 (217.0-219.0) | 1.0 (1.0-1.0) | 6.4 (6.4-6.5) | 346.0 (345.0-348.0) | 1.0 (1.0-1.0) | 4.0 (4.0-4.0) |
+| 8 | union | 2.7 (2.0-3.0) | 3.0 (3.0-3.0) | 0.1 (0.1-0.1) | 3.7 (3.0-4.0) | 1.0 (1.0-1.0) | 0.0 (0.0-0.0) |
+| 8 | blind | 320.3 (318.0-325.0) | 1.0 (1.0-1.0) | 9.3 (9.3-9.5) | 468.7 (461.0-478.0) | 304.0 (1.0-461.0) | 6.0 (6.0-6.0) |
+| 32 | union | 4.0 (3.0-5.0) | 3.0 (3.0-3.0) | 0.3 (0.3-0.4) | 6.0 (6.0-6.0) | 1.0 (1.0-1.0) | 0.0 (0.0-0.0) |
+| 32 | blind | 347.0 (343.0-352.0) | 1.0 (1.0-1.0) | 10.2 (10.0-10.3) | 513.0 (505.0-518.0) | 345.0 (1.0-518.0) | 6.0 (6.0-6.0) |
+
+![siblings](charts/x9_siblings.svg)
+![clock](charts/x9_clock.svg)
+## X10. Clients with different R and W in one run
+
+One cluster, 30 keys. Key k is always written with W = 1 + k mod 3; nine readers use R=1, 2 or 3 (three each), all at the same time. Stale reads % per (key W, reader R) pair, mean (min-max) of 3 runs. The theory says a pair is never stale when R + W > 3; those cells are marked *.
+
+| key written with | R=1 | R=2 | R=3 |
+|---|---|---|---|
+| W=1 | 13.0 (12.3-13.6) | 0.6 (0.5-0.7) | 0.0 (0.0-0.0) * |
+| W=2 | 0.3 (0.2-0.4) | 0.0 (0.0-0.0) * | 0.0 (0.0-0.0) * |
+| W=3 | 0.0 (0.0-0.0) * | 0.0 (0.0-0.0) * | 0.0 (0.0-0.0) * |
+
+Largest stale rate among the * cells (R + W > 3): 0.00%.
+
+![mixed](charts/x10_mixed.svg)
+
+## X11. A node joining a running cluster
+
+4 nodes, 400 static keys written at W=3, then 32 hot keys with a writer each and 8 readers, all R=W=2 strict. After 1s a fifth node joins (`Cluster.AddNode`); it starts empty and fills by anti-entropy. "During" is from the join until the new node holds every static key it should; "after" is the next 1s. Mean (min-max) of 3 runs.
+
+| anti-entropy interval | stale % before | stale % during | stale % after | put failures % during | time until new node is filled (ms) | static copies lost | keys on new node % |
+|---|---|---|---|---|---|---|---|
+| 20ms | 0.0 (0.0-0.0) | 0.0 (0.0-0.0) | 0.0 (0.0-0.0) | 0.0 (0.0-0.0) | 63.5 (57.5-75.1) | 0.0 (0.0-0.0) | 65.8 (65.8-65.8) |
+| 100ms | 0.0 (0.0-0.0) | 0.0 (0.0-0.0) | 0.0 (0.0-0.0) | 0.0 (0.0-0.0) | 219.6 (33.0-392.3) | 0.0 (0.0-0.0) | 65.8 (65.8-65.8) |
+| 500ms | 0.0 (0.0-0.0) | 0.0 (0.0-0.0) | 0.0 (0.0-0.0) | 0.0 (0.0-0.0) | 1784.7 (1523.4-2025.6) | 0.0 (0.0-0.0) | 65.7 (65.7-65.8) |
+
+![join](charts/x11_join.svg)
