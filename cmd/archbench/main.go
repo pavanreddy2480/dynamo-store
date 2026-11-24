@@ -11,6 +11,7 @@
 //   - A4 (a4_coordinator.go): how a client chooses its coordinator.
 //   - A5 (a5_timeout.go): the coordinator's replica timeout.
 //   - A6 (a6_merkle.go): full-state vs Merkle anti-entropy, tree depth.
+//   - A7 (a7_lazy.go): eager vs lazy Merkle-tree maintenance.
 //
 // Everything printed to stdout is also collected and written, unchanged, to
 // <out>/architecture.md once all experiments have finished.
@@ -52,7 +53,7 @@ var experiments = []struct {
 	run func()
 }{
 	{"A1", ringBalance}, {"A2", replication}, {"A3", repair}, {"A4", coordinatorChoice},
-	{"A5", timeouts}, {"A6", merkleVsFull},
+	{"A5", timeouts}, {"A6", merkleVsFull}, {"A7", lazyVsEager},
 }
 
 // main parses flags, runs the experiments in order, and writes the

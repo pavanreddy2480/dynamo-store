@@ -122,21 +122,42 @@ func (nd *Node) put(k string, vs []Version) {
 	if nd.cfg.AntiEntropy != MerkleSync {
 		return
 	}
+	if nd.cfg.LazyTrees {
+		nd.dirty[k] = struct{}{}
+		return
+	}
+	nd.updateTrees(k)
+}
+
+// updateTrees rehashes key k into the tree of every peer that shares it.
+// The caller holds nd.mu.
+func (nd *Node) updateTrees(k string) {
 	pl := nd.ring.PreferenceList(k, nd.cfg.N)
 	if !contains(pl, nd.ID) {
 		return
 	}
-	rh, kh := nd.ring.hash(k), hashVersions(k, vs)
+	rh, kh := nd.ring.hash(k), hashVersions(k, nd.data[k])
 	for _, p := range pl {
 		if p != nd.ID {
-			nd.tree(p).set(k, rh, kh)
+			nd.treeFor(p).set(k, rh, kh)
 		}
 	}
 }
 
-// tree returns this node's Merkle tree for peer, creating it if needed.
-// The caller holds nd.mu.
+// tree returns this node's Merkle tree for peer, bringing the trees up to
+// date first when LazyTrees is on: every key written since the last call is
+// hashed once, however many times it was written. The caller holds nd.mu.
 func (nd *Node) tree(peer string) *merkle {
+	for k := range nd.dirty {
+		nd.updateTrees(k)
+		delete(nd.dirty, k)
+	}
+	return nd.treeFor(peer)
+}
+
+// treeFor returns the tree for peer, creating it if needed, without
+// flushing dirty keys. The caller holds nd.mu.
+func (nd *Node) treeFor(peer string) *merkle {
 	t := nd.trees[peer]
 	if t == nil {
 		t = newMerkle(nd.cfg.MerkleDepth)

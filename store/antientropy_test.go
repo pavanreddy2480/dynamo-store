@@ -11,9 +11,12 @@ import (
 	"dynamostore/vclock"
 )
 
-// merkleModes lists every Merkle-based SyncMode; each property below must
-// hold for all of them.
-var merkleModes = []SyncMode{MerkleSync}
+// variants are the Merkle configurations every property below must hold
+// for: eager tree updates and lazy ones.
+var variants = []struct {
+	name string
+	lazy bool
+}{{"eager", false}, {"lazy", true}}
 
 // randomReplicas plays a random write history for one key the way the
 // store does, but without a network, and returns each replica's final
@@ -119,7 +122,7 @@ func checkTreesMatchData(t *testing.T, c *Cluster) {
 			}
 		}
 		for p, f := range fresh {
-			if nd.trees[p].h[1] != f.h[1] {
+			if nd.tree(p).h[1] != f.h[1] {
 				t.Errorf("%s: tree for %s drifted from its data", nd.ID, p)
 			}
 		}
@@ -129,9 +132,9 @@ func checkTreesMatchData(t *testing.T, c *Cluster) {
 
 // fastConfig is DefaultConfig with a quiet network (no heavy tail) and no
 // background handoff, so anti-entropy is the only repair that runs.
-func fastConfig(mode SyncMode) Config {
+func fastConfig(mode SyncMode, lazy bool) Config {
 	cfg := DefaultConfig()
-	cfg.Node.AntiEntropy = mode
+	cfg.Node.AntiEntropy, cfg.Node.LazyTrees = mode, lazy
 	cfg.Node.HandoffInterval = 0
 	cfg.Latency = LatencyModel{Base: 50 * time.Microsecond}
 	cfg.Client = cfg.Latency
@@ -143,14 +146,14 @@ func fastConfig(mode SyncMode) Config {
 // is exactly what full-state sync produces from the same state. A second
 // round then finds nothing to do and sends no keys.
 func TestMerkleSyncMatchesFullStateSync(t *testing.T) {
-	for _, mode := range merkleModes {
+	for _, v := range variants {
 		for seed := int64(1); seed <= 25; seed++ {
-			full, mk := NewCluster(fastConfig(FullStateSync)), NewCluster(fastConfig(mode))
+			full, mk := NewCluster(fastConfig(FullStateSync, false)), NewCluster(fastConfig(MerkleSync, v.lazy))
 			want := seedDivergent(t, seed, 300, full, mk)
 			checkTreesMatchData(t, mk)
 			full.AntiEntropy()
 			mk.AntiEntropy()
-			label := fmt.Sprintf("mode %d seed %d", mode, seed)
+			label := fmt.Sprintf("%s seed %d", v.name, seed)
 			checkConverged(t, full, want, label+" full-state")
 			checkConverged(t, mk, want, label+" merkle")
 			checkTreesMatchData(t, mk)
@@ -172,9 +175,9 @@ func TestMerkleSyncMatchesFullStateSync(t *testing.T) {
 // anti-entropy can repair the replicas. Every replica must end equal, and
 // every acknowledged write must be on all three replicas of its key.
 func TestMerkleRepairsPartition(t *testing.T) {
-	for _, mode := range merkleModes {
+	for _, v := range variants {
 		cfg := DefaultConfig()
-		cfg.Node.AntiEntropy = mode
+		cfg.Node.LazyTrees = v.lazy
 		cfg.Node.HandoffInterval = 0
 		c := NewCluster(cfg)
 		var mu sync.Mutex
@@ -224,11 +227,11 @@ func TestMerkleRepairsPartition(t *testing.T) {
 			want[key] = rules{}.merge(nil, all...)
 			for _, a := range acked[key] {
 				if !(rules{}).covers(want[key], a) {
-					t.Fatalf("mode %d: acknowledged write %v of %s lost", mode, a.Dot, key)
+					t.Fatalf("%s: acknowledged write %v of %s lost", v.name, a.Dot, key)
 				}
 			}
 		}
-		checkConverged(t, c, want, fmt.Sprintf("mode %d", mode))
+		checkConverged(t, c, want, v.name)
 		c.Close()
 	}
 }

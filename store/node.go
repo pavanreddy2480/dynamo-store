@@ -31,6 +31,9 @@ type NodeConfig struct {
 	ReplicateNewOnly bool
 	AntiEntropy      SyncMode // how anti-entropy compares replicas
 	MerkleDepth      int      // levels below a Merkle root: 1<<depth leaves
+	// LazyTrees makes a write only mark its key dirty; dirty keys are
+	// hashed into the trees just before a sync reads them.
+	LazyTrees bool
 }
 
 // Node is one storage replica. Any node can coordinate a request.
@@ -48,11 +51,12 @@ type Node struct {
 	net  *Network   // network the node is registered on
 	ring *Ring      // shared ring used to compute preference lists
 
-	mu     sync.Mutex                      // guards data, hints, issued, trees and cfg.ClockSkew
+	mu     sync.Mutex                      // guards data, hints, issued, trees, dirty and cfg.ClockSkew
 	data   map[string][]Version            // key -> sibling set for keys this node owns
 	hints  map[string]map[string][]Version // intended owner -> key -> versions
 	issued map[string]uint64               // highest counter this node issued per key
 	trees  map[string]*merkle              // peer -> Merkle tree of the keys shared with it
+	dirty  map[string]struct{}             // LazyTrees: keys written since the trees were last updated
 
 	stop chan struct{}  // closed by close to stop the handoff loop
 	wg   sync.WaitGroup // tracks the handoff goroutine so close can wait for it
@@ -89,6 +93,7 @@ func newNode(id string, cfg NodeConfig, net *Network, ring *Ring) *Node {
 		hints:  map[string]map[string][]Version{},
 		issued: map[string]uint64{},
 		trees:  map[string]*merkle{},
+		dirty:  map[string]struct{}{},
 		stop:   make(chan struct{}),
 	}
 	net.Register(id, nd.handle)
