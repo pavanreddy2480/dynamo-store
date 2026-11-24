@@ -46,7 +46,7 @@ func TestMerkleOnFixedRing(t *testing.T) {
 		cfg.Partitions = 256
 		c := NewCluster(cfg)
 		want := seedDivergent(t, seed, 300, c)
-		c.AntiEntropy()
+		syncRound(t, c)
 		checkConverged(t, c, want, fmt.Sprintf("fixed ring seed %d", seed))
 		c.Close()
 	}
