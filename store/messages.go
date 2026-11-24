@@ -1,9 +1,10 @@
 // This file defines the wire messages exchanged over the simulated Network:
-// replica-level requests (putReq, getReq, syncReq) that only touch one
+// replica-level requests (putReq, getReq) that only touch one
 // node's local state, and coordinator-level requests (coordPutReq,
 // coordGetReq) that a client sends to a coordinator, which then fans them
 // out to the key's replicas. It also defines ErrUnavailable, the error
-// reported when a quorum cannot be reached.
+// reported when a quorum cannot be reached. Anti-entropy messages are in
+// antientropy.go.
 
 package store
 
@@ -81,17 +82,5 @@ type (
 		Versions []Version // merged sibling set from the first R replies
 		Replies  int       // successful replies merged into Versions
 		Err      error     // wraps ErrUnavailable when Replies < R
-	}
-
-	// syncReq carries one side of an anti-entropy exchange: every key the
-	// sender owns that the receiver should also hold. The reply carries the
-	// receiver's half.
-	syncReq struct {
-		Items map[string][]Version // key -> sender's versions
-	}
-
-	// syncResp is the receiver's half of an anti-entropy exchange.
-	syncResp struct {
-		Items map[string][]Version // key -> receiver's versions
 	}
 )

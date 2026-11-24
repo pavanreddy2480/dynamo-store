@@ -130,7 +130,7 @@ func (nd *Node) coordPut(r coordPutReq) coordPutResp {
 	}
 	v := Version{Value: r.Value, Dot: dot, Ctx: ctx, TS: time.Now().Add(nd.cfg.ClockSkew).UnixNano(), Origin: nd.ID}
 	if selfIdx >= 0 {
-		nd.data[r.Key] = nd.rules().merge(nd.data[r.Key], v)
+		nd.put(r.Key, nd.rules().merge(nd.data[r.Key], v))
 	} else {
 		// Not a replica for this key (sloppy fallback): keep the write as a
 		// hint for the first preferred node so it is never lost here.

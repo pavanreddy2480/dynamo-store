@@ -29,6 +29,8 @@ type NodeConfig struct {
 	// of the coordinator's whole sibling set (kept to measure why the
 	// default matters).
 	ReplicateNewOnly bool
+	AntiEntropy      SyncMode // how anti-entropy compares replicas
+	MerkleDepth      int      // levels below a Merkle root: 1<<depth leaves
 }
 
 // Node is one storage replica. Any node can coordinate a request.
@@ -46,15 +48,17 @@ type Node struct {
 	net  *Network   // network the node is registered on
 	ring *Ring      // shared ring used to compute preference lists
 
-	mu     sync.Mutex                      // guards data, hints, issued and cfg.ClockSkew
+	mu     sync.Mutex                      // guards data, hints, issued, trees and cfg.ClockSkew
 	data   map[string][]Version            // key -> sibling set for keys this node owns
 	hints  map[string]map[string][]Version // intended owner -> key -> versions
 	issued map[string]uint64               // highest counter this node issued per key
+	trees  map[string]*merkle              // peer -> Merkle tree of the keys shared with it
 
 	stop chan struct{}  // closed by close to stop the handoff loop
 	wg   sync.WaitGroup // tracks the handoff goroutine so close can wait for it
 
 	coordinated atomic.Int64 // client requests this node coordinated
+	stats       syncCounters // anti-entropy traffic this node started
 }
 
 // Coordinated returns how many client requests this node coordinated.
@@ -84,6 +88,7 @@ func newNode(id string, cfg NodeConfig, net *Network, ring *Ring) *Node {
 		data:   map[string][]Version{},
 		hints:  map[string]map[string][]Version{},
 		issued: map[string]uint64{},
+		trees:  map[string]*merkle{},
 		stop:   make(chan struct{}),
 	}
 	net.Register(id, nd.handle)
@@ -130,8 +135,8 @@ func (nd *Node) rules() rules { return rules{policy: nd.cfg.Policy, clocks: nd.c
 func (nd *Node) close() { close(nd.stop); nd.wg.Wait() }
 
 // handle is the node's network entry point. It dispatches one request by
-// type and returns the reply. Replica-level requests (putReq, getReq,
-// syncReq) only touch local state; coordinator requests fan out to other
+// type and returns the reply. Replica-level requests (putReq, getReq
+// and the anti-entropy messages) only touch local state; coordinator requests fan out to other
 // replicas.
 //
 // The Network calls it concurrently, once per delivered message. It panics
@@ -159,7 +164,7 @@ func (nd *Node) handle(from string, req any) any {
 			}
 			m[r.Key] = nd.rules().merge(m[r.Key], cloneVersions(r.V)...)
 		} else {
-			nd.data[r.Key] = nd.rules().merge(nd.data[r.Key], cloneVersions(r.V)...)
+			nd.put(r.Key, nd.rules().merge(nd.data[r.Key], cloneVersions(r.V)...))
 		}
 		nd.mu.Unlock()
 		return putResp{}
@@ -173,6 +178,13 @@ func (nd *Node) handle(from string, req any) any {
 		return nd.coordGet(r)
 	case syncReq:
 		return nd.handleSync(from, r)
+	case merkleReq:
+		return nd.handleMerkle(from, r)
+	case leafReq:
+		return nd.handleLeaf(from, r)
+	case pushReq:
+		nd.absorb(r.Items)
+		return putResp{}
 	}
 	panic(fmt.Sprintf("unknown request %T", req))
 }
@@ -214,6 +226,18 @@ func (nd *Node) Snapshot(key string) []Version {
 	nd.mu.Lock()
 	defer nd.mu.Unlock()
 	return cloneVersions(nd.data[key])
+}
+
+// Inject merges vs into this node's owned versions of key, bypassing the
+// network. Benchmarks use it to build large replica states quickly.
+//
+// Parameters:
+//   - key: the key to write.
+//   - vs: versions to merge; cloned before being stored.
+func (nd *Node) Inject(key string, vs ...Version) {
+	nd.mu.Lock()
+	defer nd.mu.Unlock()
+	nd.put(key, nd.rules().merge(nd.data[key], cloneVersions(vs)...))
 }
 
 // HintCount returns how many hinted keys this node is holding.

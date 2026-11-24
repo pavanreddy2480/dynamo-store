@@ -39,6 +39,7 @@ func DefaultConfig() Config {
 			ReplicaTimeout:  20 * time.Millisecond,
 			ReadRepair:      true,
 			HandoffInterval: 5 * time.Millisecond,
+			MerkleDepth:     10,
 		},
 		Latency: DefaultLatency,
 		Client:  DefaultClientLatency,
@@ -139,6 +140,19 @@ func (c *Cluster) AntiEntropy() {
 			}
 		}
 	}
+}
+
+// SyncStats returns the anti-entropy traffic of every node, summed.
+func (c *Cluster) SyncStats() SyncStats {
+	var s SyncStats
+	for _, nd := range c.Nodes {
+		x := nd.SyncStats()
+		s.RoundTrips += x.RoundTrips
+		s.Hashes += x.Hashes
+		s.Keys += x.Keys
+		s.Bytes += x.Bytes
+	}
+	return s
 }
 
 // WaitHintsDrained blocks until no node holds hints or the deadline passes.
