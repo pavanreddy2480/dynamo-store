@@ -82,7 +82,7 @@ func partitionExperiment() {
 	schemes := []placement{
 		{"equal spacing, 1 piece per node", store.NewFixedRing(ids4, 4), store.NewFixedRing(ids5, 5), store.NewFixedRing(ids4, 4)},
 		{"random vnodes, 8 per node", store.NewRing(ids4, 8), store.NewRing(ids5, 8), store.NewRing(ids4, 8)},
-		{"random vnodes, 64 per node (default)", store.NewRing(ids4, 64), store.NewRing(ids5, 64), store.NewRing(ids4, 64)},
+		{"random vnodes, 64 per node (previous default)", store.NewRing(ids4, 64), store.NewRing(ids5, 64), store.NewRing(ids4, 64)},
 		{"fixed partitions, Q=256", store.NewFixedRing(ids4, 256), fixed5, fixed5.WithoutNode("n5")},
 	}
 	w("\n## A8. Ring placement: equal spacing vs random vnodes vs fixed partitions\n\n")

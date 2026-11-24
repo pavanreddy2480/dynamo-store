@@ -10,6 +10,8 @@ The system runs as a simulation inside one process, so absolute latencies depend
 
 ---
 
+> **Default ring changed.** The default is now 256 fixed equal partitions with one eager Merkle tree per partition (see [docs/MERKLE_EXPERIMENTS.md](docs/MERKLE_EXPERIMENTS.md) and [docs/FIXED_MERKLE.md](docs/FIXED_MERKLE.md)). `results/` was regenerated on it. Numbers quoted in the text below were measured on the earlier 64-random-vnode ring and differ slightly from the current tables (for example E1 stale reads at R=W=1 are now 25.9% rather than 21.5%, and strict R=W=2 minority availability is 40.6% rather than 28%); the conclusions are unchanged. Use `results/` for current numbers.
+
 ## Contents
 
 1. [Goals](#1-goals)
@@ -250,7 +252,9 @@ Each decision lists what was chosen, the alternatives considered, why the choice
 * **Why.** Dropped messages are what really happens on a network, and they make failed operations cost a full timeout, which A5 measures. The exact failure detector keeps sloppy-quorum target selection simple and deterministic. Its cost (no false suspicions) is listed in [§9](#9-limitations-and-what-production-would-change).
 * **Evidence.** E3: strict operations on the wrong side of a partition fail with latency equal to the timeout. A5: failed-operation p50 tracks the timeout (3.9ms at 2ms, 22.4ms at 20ms, 102.7ms at 100ms).
 
-### D3. Consistent hashing with MD5 and 64 virtual nodes **(new evidence)**
+### D3. Consistent hashing with MD5; now 256 fixed partitions (was 64 random vnodes) **(new evidence)**
+
+* **Update.** The default ring is now `NewFixedRing(nodes, 256)` (A8, [docs/MERKLE_EXPERIMENTS.md](docs/MERKLE_EXPERIMENTS.md)): node shares 59.8–60.8% and 19.9% of copies moved on a join, against a 56.7–66.3% spread and 22.1% for 64 random vnodes. The A1 and A1b analysis below is the evidence for the earlier choice and for MD5.
 
 * **Decision.** Hash keys and tokens with MD5 (as Dynamo does) and give each node 64 virtual nodes.
 * **Alternatives.** FNV-1a (faster, non-cryptographic); fewer or more vnodes; modulo hashing.
