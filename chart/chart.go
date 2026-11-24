@@ -1,15 +1,15 @@
-// This file draws the SVG charts committed to results/ next to
-// architecture.md: grouped bar charts and line charts, with an optional
-// log scale (log10(1+v), so zero stays on the axis). Hovering a bar or a
-// point shows its exact value. No dependencies beyond the standard library.
-
-package main
+// Package chart draws the SVG charts committed to results/: grouped bar
+// charts and line charts with an optional log scale (log10(1+v), so zero
+// stays on the axis). Hovering a bar or point shows its exact value. It uses
+// only the standard library.
+package chart
 
 import (
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -76,20 +76,21 @@ func (c *chart) yAxis() {
 	}
 }
 
-// save closes the document and writes it to <out>/<name>.
-func (c *chart) save(name string) {
+// save closes the document and writes it to path, creating its directory.
+// It panics on I/O errors: the chart is the caller's only product.
+func (c *chart) save(path string) {
 	c.b.WriteString(`</svg>`)
-	if err := os.MkdirAll(*outDir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		panic(err)
 	}
-	if err := os.WriteFile(filepath.Join(*outDir, name), []byte(c.b.String()), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(c.b.String()), 0o644); err != nil {
 		panic(err)
 	}
 }
 
-// barChart draws vals[series][group] as grouped bars, each labelled with
-// its value, and saves it as <out>/<name>.
-func barChart(name, title, xLabel, yLabel string, groups, series []string, vals [][]float64, logY bool) {
+// Bar draws vals[series][group] as grouped bars, each labelled with its
+// value, and saves it to path.
+func Bar(path, title, xLabel, yLabel string, groups, series []string, vals [][]float64, logY bool) {
 	c := newChart(title, xLabel, yLabel, series, maxOf(vals)*1.15, logY)
 	gw := float64(chartW-padL-padR) / float64(len(groups))
 	bw := math.Min(48, (gw-24)/float64(len(series)))
@@ -99,24 +100,28 @@ func barChart(name, title, xLabel, yLabel string, groups, series []string, vals 
 		for s := range series {
 			v, x := vals[s][g], x0+bw*float64(s)
 			y := c.y(v)
-			fmt.Fprintf(&c.b, `<path d="M%.1f %d V%.1f a4 4 0 0 1 4 -4 H%.1f a4 4 0 0 1 4 4 V%d Z" fill="%s"><title>%s, %s: %s</title></path>`,
-				x+1, chartH-padB, math.Min(y+4, float64(chartH-padB)), x+bw-5, chartH-padB, palette[s], esc(series[s]), esc(label), num(v))
+			if v > 0 { // a zero value is a label only, not a stub bar
+				fmt.Fprintf(&c.b, `<path d="M%.1f %d V%.1f a4 4 0 0 1 4 -4 H%.1f a4 4 0 0 1 4 4 V%d Z" fill="%s"><title>%s, %s: %s</title></path>`,
+					x+1, chartH-padB, math.Min(y+4, float64(chartH-padB)), x+bw-5, chartH-padB, palette[s], esc(series[s]), esc(label), num(v))
+			}
 			fmt.Fprintf(&c.b, `<text x="%.1f" y="%.1f" text-anchor="middle" font-size="11" fill="%s">%s</text>`, x+bw/2, y-4, inkSoft, num(v))
 		}
 	}
-	c.save(name)
+	c.save(path)
 }
 
-// lineChart draws ys[series][i] against xs[i] and saves it as <out>/<name>.
-// Each line ends with a direct label naming its series.
-func lineChart(name, title, xLabel, yLabel string, xs []float64, series []string, ys [][]float64, logY bool) {
+// Line draws ys[series][i] against the category labels xs[i], evenly
+// spaced, and saves it to path. Each line ends with a label naming its
+// series.
+func Line(path, title, xLabel, yLabel string, xs, series []string, ys [][]float64, logY bool) {
 	c := newChart(title, xLabel, yLabel, series, maxOf(ys)*1.15, logY)
 	px := func(i int) float64 {
-		return float64(padL+20) + float64(i)*float64(chartW-padL-padR-110)/float64(len(xs)-1)
+		return float64(padL+20) + float64(i)*float64(chartW-padL-padR-130)/float64(len(xs)-1)
 	}
 	for i, x := range xs {
-		fmt.Fprintf(&c.b, `<text x="%.1f" y="%d" text-anchor="middle" fill="%s">%s</text>`, px(i), chartH-padB+18, ink, num(x))
+		fmt.Fprintf(&c.b, `<text x="%.1f" y="%d" text-anchor="middle" fill="%s">%s</text>`, px(i), chartH-padB+18, ink, esc(x))
 	}
+	lastLabel := -1000.0
 	for s := range series {
 		var pts []string
 		for i, v := range ys[s] {
@@ -125,12 +130,17 @@ func lineChart(name, title, xLabel, yLabel string, xs []float64, series []string
 		fmt.Fprintf(&c.b, `<polyline points="%s" fill="none" stroke="%s" stroke-width="2"/>`, strings.Join(pts, " "), palette[s])
 		for i, v := range ys[s] {
 			fmt.Fprintf(&c.b, `<circle cx="%.1f" cy="%.1f" r="4.5" fill="%s" stroke="%s" stroke-width="2"><title>%s at %s: %s</title></circle>`,
-				px(i), c.y(v), palette[s], surfce, esc(series[s]), num(xs[i]), num(v))
+				px(i), c.y(v), palette[s], surfce, esc(series[s]), esc(xs[i]), num(v))
 		}
 		last := len(xs) - 1
-		fmt.Fprintf(&c.b, `<text x="%.1f" y="%.1f" fill="%s">%s</text>`, px(last)+10, c.y(ys[s][last])+4, ink, esc(series[s]))
+		// Skip a direct label that would overprint the previous one; the
+		// legend still names the series.
+		if y := c.y(ys[s][last]); math.Abs(y-lastLabel) > 14 {
+			fmt.Fprintf(&c.b, `<text x="%.1f" y="%.1f" fill="%s">%s</text>`, px(last)+10, y+4, ink, esc(series[s]))
+			lastLabel = y
+		}
 	}
-	c.save(name)
+	c.save(path)
 }
 
 // maxOf returns the largest value in vals, at least 1.
@@ -155,18 +165,20 @@ func niceStep(raw float64) float64 {
 	return 10 * p
 }
 
-// num formats a value compactly: 1234567 -> 1.2M, 12345 -> 12k, 0.25 -> 0.25.
+// num formats a value compactly with three significant digits:
+// 1234567 becomes 1.2M, 12345 becomes 12k, 99.7 stays 99.7, 0.06 stays 0.06.
 func num(v float64) string {
-	switch a := math.Abs(v); {
+	a := math.Abs(v)
+	switch {
 	case a >= 1e6:
 		return fmt.Sprintf("%.1fM", v/1e6)
 	case a >= 1e4:
 		return fmt.Sprintf("%.0fk", v/1e3)
-	case a >= 100 || v == math.Trunc(v):
-		return fmt.Sprintf("%.0f", v)
-	default:
-		return fmt.Sprintf("%.2g", v)
+	case a == 0:
+		return "0"
 	}
+	p := math.Pow(10, 2-math.Floor(math.Log10(a)))
+	return strconv.FormatFloat(math.Round(v*p)/p, 'f', -1, 64)
 }
 
 // esc escapes text for SVG.

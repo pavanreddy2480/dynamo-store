@@ -6,6 +6,7 @@
 // latency, drives a workload against it, and prints a Markdown table:
 //
 //   - A1 (a1_ring.go): ring hash function and virtual nodes per node.
+//   - A1b (a1b_vnodes.go): ablation of the virtual nodes per node.
 //   - A2 (a2_replication.go): replication payload and version comparison.
 //   - A3 (a3_repair.go): repair mechanisms after a partition heals.
 //   - A4 (a4_coordinator.go): how a client chooses its coordinator.
@@ -18,15 +19,16 @@
 //
 // Usage:
 //
-//	go run ./cmd/archbench [-duration 2s] [-out results] [-only A6]
+//	go run ./cmd/archbench [-duration 2s] [-out results] [-only A1b]
 //
 // Flags:
 //
 //	-duration  load duration per configuration (default 2s); A3 and A5 run
 //	           their load phases for half of it
-//	-out       output directory for architecture.md (default "results")
-//	-only      run only these experiments (comma-separated, e.g. A6,A7);
-//	           charts are still written but architecture.md is not
+//	-out       output directory for architecture.md and the SVG charts
+//	           (default "results")
+//	-only      run only these experiments (comma-separated, e.g. A1b,A3);
+//	           architecture.md is then not written
 package main
 
 import (
@@ -44,7 +46,7 @@ var (
 	// outDir is the directory architecture.md is written to (-out).
 	outDir = flag.String("out", "results", "output directory")
 	// only restricts the run to some experiments (-only).
-	only = flag.String("only", "", "comma-separated experiments to run, e.g. A6,A7")
+	only = flag.String("only", "", "comma-separated experiments to run, e.g. A1b,A3")
 )
 
 // experiments lists every experiment in report order.
@@ -52,8 +54,8 @@ var experiments = []struct {
 	id  string
 	run func()
 }{
-	{"A1", ringBalance}, {"A2", replication}, {"A3", repair}, {"A4", coordinatorChoice},
-	{"A5", timeouts}, {"A6", merkleVsFull}, {"A8", partitionExperiment},
+	{"A1", ringBalance}, {"A1b", vnodeAblation}, {"A2", replication}, {"A3", repair},
+	{"A4", coordinatorChoice}, {"A5", timeouts}, {"A6", merkleVsFull}, {"A8", partitionExperiment},
 }
 
 // main parses flags, runs the experiments in order, and writes the

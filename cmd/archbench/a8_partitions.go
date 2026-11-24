@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 
+	"dynamostore/chart"
 	"dynamostore/store"
 )
 
@@ -98,7 +99,7 @@ func partitionExperiment() {
 		cvs, joins, leaves = append(cvs, mx-mn), append(joins, j), append(leaves, l)
 	}
 	short := []string{"equal spacing", "vnodes x8", "vnodes x64", "fixed Q=256"}
-	barChart("a8_balance.svg", "Load imbalance: most-loaded minus least-loaded node (points of share, ideal 0)", "placement scheme", "max share - min share (%)", short, []string{"5 nodes"}, [][]float64{cvs}, false)
-	barChart("a8_moved.svg", "Replica copies moved when a node joins or leaves (ideal 20%)", "placement scheme", "% of all copies moved", short, []string{"join 4→5", "leave 5→4"}, [][]float64{joins, leaves}, false)
+	chart.Bar(*outDir+"/a8_balance.svg", "Load imbalance: most-loaded minus least-loaded node (points of share, ideal 0)", "placement scheme", "max share - min share (%)", short, []string{"5 nodes"}, [][]float64{cvs}, false)
+	chart.Bar(*outDir+"/a8_moved.svg", "Replica copies moved when a node joins or leaves (ideal 20%)", "placement scheme", "% of all copies moved", short, []string{"join 4→5", "leave 5→4"}, [][]float64{joins, leaves}, false)
 	w("\n![balance](a8_balance.svg)\n![moved](a8_moved.svg)\n")
 }

@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	"time"
 
+	"dynamostore/chart"
 	"dynamostore/store"
 )
 
@@ -96,13 +97,17 @@ func merkleVsFull() {
 	}
 	groups := []string{"0% diverged", "1% diverged", "10% diverged"}
 	names := []string{modes[0].name, modes[1].name}
-	barChart("a6_keys_sent.svg", "Keys sent in one anti-entropy round (20,000 keys, log scale)", "fraction of keys that differ on one replica", "keys sent", groups, names, keys, true)
-	barChart("a6_bytes_sent.svg", "KB sent in one anti-entropy round (20,000 keys, log scale)", "fraction of keys that differ on one replica", "KB sent", groups, names, kb, true)
+	chart.Bar(*outDir+"/a6_keys_sent.svg", "Keys sent in one anti-entropy round (20,000 keys, log scale)", "fraction of keys that differ on one replica", "keys sent", groups, names, keys, true)
+	chart.Bar(*outDir+"/a6_bytes_sent.svg", "KB sent in one anti-entropy round (20,000 keys, log scale)", "fraction of keys that differ on one replica", "KB sent", groups, names, kb, true)
 	w("\n![keys sent](a6_keys_sent.svg)\n![bytes sent](a6_bytes_sent.svg)\n")
 
 	w("\nDepth of each partition's tree (leaves = 2^depth) at 1%% and 10%% divergence:\n\n| depth | divergence | keys sent | hashes sent | KB sent | round trips |\n|---|---|---|---|---|---|\n")
 	depths := []float64{0, 1, 2, 3, 4, 5, 6, 8}
 	dkb := make([][]float64, 2)
+	var depthLabels []string
+	for _, d := range depths {
+		depthLabels = append(depthLabels, fmt.Sprint(int(d)))
+	}
 	for i, d := range []float64{0.01, 0.10} {
 		for _, depth := range depths {
 			cfg := store.DefaultConfig()
@@ -112,6 +117,6 @@ func merkleVsFull() {
 			dkb[i] = append(dkb[i], float64(r.s.Bytes)/1024)
 		}
 	}
-	lineChart("a6_depth.svg", "KB sent per round vs depth of each partition tree (20,000 keys, 256 partitions)", "tree depth per partition (2^depth leaves)", "KB sent", depths, []string{"1% diverged", "10% diverged"}, dkb, false)
+	chart.Line(*outDir+"/a6_depth.svg", "KB sent per round vs depth of each partition tree (20,000 keys, 256 partitions)", "tree depth per partition (2^depth leaves)", "KB sent", depthLabels, []string{"1% diverged", "10% diverged"}, dkb, false)
 	w("\n![depth](a6_depth.svg)\n")
 }
