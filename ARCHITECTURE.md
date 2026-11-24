@@ -368,7 +368,7 @@ Each decision lists what was chosen, the alternatives considered, why the choice
 
 ### D13. Three repair mechanisms: hinted handoff, read repair, anti-entropy **(new evidence)**
 
-* **Decision.** All three run. Hinted handoff runs every 5ms. Read repair runs after every read. Anti-entropy is one full-state exchange per reachable replica pair, triggered after heal.
+* **Decision.** All three run. Hinted handoff runs every 5ms. Read repair runs after every read. Anti-entropy now compares per-partition Merkle trees and exchanges only differing keys, and a background loop starts it every 100 ms against a random reachable peer (X3; see [ABLATION.md](ABLATION.md)). Earlier text on this branch said it was one full-state exchange "triggered after heal"; nothing triggered it then.
 * **Alternatives.** Any one of them alone.
 * **Why.** Each covers a different gap. Hinted handoff moves writes from **fallback nodes** back to their owners, which neither of the others can do, since fallbacks aren't in any key's preference list. Read repair fixes only keys that get read. Anti-entropy fixes everything between preferred replicas, but costs a full exchange.
 * **Evidence.** A3: sloppy writes on both sides of a partition for 1s, then heal and apply only some mechanisms:
@@ -385,7 +385,7 @@ Each decision lists what was chosen, the alternatives considered, why the choice
 
 ### D14. Replica timeout of 20ms **(new evidence)**
 
-* **Decision.** The coordinator waits up to 20ms for replicas, and the client waits 60ms (3×).
+* **Decision (updated).** The coordinator's timeout is computed from the latency model (`AutoTimeout`: two hops of base + 4 mean jitters + slow-path extra, about 17ms on the default network); the client waits 3× that. X2 shows a fixed 20ms fails 22% of puts at 5ms hops while the computed value fails 0% on LAN, default and cross-region networks. The A5 table below was measured with fixed values.
 * **Alternatives.** Shorter timeouts (fail fast) or longer ones.
 * **Why.** The timeout must sit above the normal latency tail, or healthy operations fail spuriously. It should also be as short as possible, because every operation that really fails during a partition costs the full timeout.
 * **Evidence.** A5 (strict R=W=2):
