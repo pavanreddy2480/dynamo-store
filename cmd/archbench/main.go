@@ -6,6 +6,7 @@
 // latency, drives a workload against it, and prints a Markdown table:
 //
 //   - A1 (a1_ring.go): ring hash function and virtual nodes per node.
+//   - A1b (a1b_vnodes.go): ablation of the virtual nodes per node.
 //   - A2 (a2_replication.go): replication payload and version comparison.
 //   - A3 (a3_repair.go): repair mechanisms after a partition heals.
 //   - A4 (a4_coordinator.go): how a client chooses its coordinator.
@@ -16,13 +17,16 @@
 //
 // Usage:
 //
-//	go run ./cmd/archbench [-duration 2s] [-out results]
+//	go run ./cmd/archbench [-duration 2s] [-out results] [-only A1b]
 //
 // Flags:
 //
 //	-duration  load duration per configuration (default 2s); A3 and A5 run
 //	           their load phases for half of it
-//	-out       output directory for architecture.md (default "results")
+//	-out       output directory for architecture.md and the SVG charts
+//	           (default "results")
+//	-only      run only these experiments (comma-separated, e.g. A1b,A3);
+//	           architecture.md is then not written
 package main
 
 import (
@@ -30,6 +34,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -38,9 +43,20 @@ var (
 	dur = flag.Duration("duration", 2*time.Second, "load duration per configuration")
 	// outDir is the directory architecture.md is written to (-out).
 	outDir = flag.String("out", "results", "output directory")
+	// only restricts the run to some experiments (-only).
+	only = flag.String("only", "", "comma-separated experiments to run, e.g. A1b,A3")
 )
 
-// main parses flags, runs experiments A1 through A5 in order, and writes the
+// experiments lists every experiment in report order.
+var experiments = []struct {
+	id  string
+	run func()
+}{
+	{"A1", ringBalance}, {"A1b", vnodeAblation}, {"A2", replication}, {"A3", repair},
+	{"A4", coordinatorChoice}, {"A5", timeouts},
+}
+
+// main parses flags, runs the experiments in order, and writes the
 // accumulated report to <out>/architecture.md.
 //
 // It panics if the output directory or file cannot be written, since the
@@ -49,11 +65,14 @@ func main() {
 	flag.Parse()
 	w("# Architecture experiments\n\n")
 	w("Default cluster unless stated: 5 nodes, N=3, replica-to-replica latency 0.4ms + Exp(0.8ms) with 3%% of messages +5ms, client hop 0.1ms + Exp(0.1ms), replica timeout 20ms. Regenerate with `go run ./cmd/archbench`.\n\n")
-	ringBalance()
-	replication()
-	repair()
-	coordinatorChoice()
-	timeouts()
+	for _, e := range experiments {
+		if *only == "" || strings.Contains(","+*only+",", ","+e.id+",") {
+			e.run()
+		}
+	}
+	if *only != "" {
+		return
+	}
 	if err := os.MkdirAll(*outDir, 0o755); err != nil {
 		panic(err)
 	}

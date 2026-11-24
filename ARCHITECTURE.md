@@ -265,6 +265,10 @@ Each decision lists what was chosen, the alternatives considered, why the choice
   | **MD5** | **64** | **56.7% – 66.3%** | **1.17** |
   | MD5 | 256 | 57.8% – 62.4% | 1.08 |
 
+  **Ablation (A1b, [docs/VNODE_ABLATION.md](docs/VNODE_ABLATION.md)).** A1 was a coarse sweep on one placement. A1b sweeps 1 to 1024 vnodes over 20 placements: imbalance falls roughly as 1/√vnodes (spread 10.6 points at 64, 5.9 at 256), data moved on a join is about 20% at every count (only the worst case improves), and lookup cost stays under 1 µs. So 64 is defensible, not optimal; 128 to 256 would balance better at no measurable cost in the simulation.
+
+  **Ablation (A1b, [docs/VNODE_ABLATION.md](docs/VNODE_ABLATION.md)).** A1 was a coarse sweep on one placement. A1b sweeps 1 to 1024 vnodes over 20 placements: imbalance falls roughly as 1/√vnodes (spread 10.6 points at 64, 5.9 at 256), data moved on a join is about 20% at every count (only the worst case improves), and lookup cost stays under 1 µs. So 64 is defensible, not optimal; 128 to 256 would balance better at no measurable cost in the simulation.
+
   64 vnodes gets within about 10% of perfect balance. 256 is slightly better but makes each `Walk` longer. Modulo hashing was rejected without measurement, because adding a node remaps almost every key.
 
 ### D4. Five nodes, three replicas per key

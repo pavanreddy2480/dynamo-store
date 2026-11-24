@@ -19,7 +19,8 @@ See [REPORT.md](REPORT.md) for the results and [ARCHITECTURE.md](ARCHITECTURE.md
 go test -race ./...               # unit + scenario tests
 go run ./cmd/demo                 # partition -> update both sides -> heal -> verify rule
 go run ./cmd/bench -duration 2s   # writes results/benchmark.md (about 2 minutes)
-go run ./cmd/archbench            # writes results/architecture.md (decision experiments A1–A5)
+go run ./cmd/archbench            # writes results/architecture.md (decision experiments A1–A5, A1b vnode ablation)
+go run ./cmd/plots                # redraws every chart in results/*.svg from the tables
 ```
 
 Requires Go 1.22+ and has no external dependencies.
@@ -43,7 +44,8 @@ Requires Go 1.22+ and has no external dependencies.
 | `store/resolver.go` | `UnionResolver`, the declared reconciliation rule |
 | `store/scenario.go` | the partition and reconcile scenario used by the demo and tests |
 | `cmd/bench` | experiments E1–E3 (quorum sweep, concurrent updates, partition availability) |
-| `cmd/archbench` | experiments A1–A5 behind the architecture decisions |
+| `cmd/archbench` | experiments A1–A5 and the A1b vnode ablation behind the architecture decisions |
+| `cmd/plots`, `chart/` | SVG charts for every experiment (see [docs/GRAPHS.md](docs/GRAPHS.md)) |
 
 ## API sketch
 
