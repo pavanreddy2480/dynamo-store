@@ -47,6 +47,12 @@ var (
 	dur = flag.Duration("duration", 2*time.Second, "load duration per configuration")
 	// outDir is the directory benchmark.md is written to.
 	outDir = flag.String("out", "results", "directory for Markdown results")
+	// ablate switches to the ablation experiments X1-X8 (results/ablations.md).
+	ablate = flag.Bool("ablate", false, "run the ablation experiments X1-X8 instead of E1-E3")
+	// reps is how many times each ablation measurement is repeated.
+	reps = flag.Int("reps", 3, "repetitions per ablation measurement")
+	// only restricts -ablate to some experiments, e.g. "X2,X5".
+	only = flag.String("only", "", "with -ablate: comma-separated experiments to run, e.g. X2,X5")
 )
 
 // main parses flags, runs experiments E1, E1b, E2 and E3 in sequence and
@@ -59,6 +65,10 @@ func main() {
 	flag.Parse()
 	if err := os.MkdirAll(*outDir, 0o755); err != nil {
 		panic(err)
+	}
+	if *ablate {
+		runAblations()
+		return
 	}
 	// w prints a formatted fragment to stdout and also appends it to the
 	// Markdown report, so the console output and the file stay identical.

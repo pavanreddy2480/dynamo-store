@@ -9,6 +9,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"time"
 )
 
@@ -201,6 +202,10 @@ func (nd *Node) coordPut(r coordPutReq) coordPutResp {
 //     fewer than R targets replied in time.
 func (nd *Node) coordGet(r coordGetReq) coordGetResp {
 	ts := nd.targets(r.Key, r.Sloppy)
+	if nd.cfg.ReadFromROnly && r.R < len(ts) {
+		rand.Shuffle(len(ts), func(i, j int) { ts[i], ts[j] = ts[j], ts[i] })
+		ts = ts[:r.R]
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), nd.cfg.ReplicaTimeout)
 	// reply is one target's answer; vs is nil when err is set.
 	type reply struct {

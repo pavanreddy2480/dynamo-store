@@ -13,6 +13,7 @@ import (
 	"math"
 	"math/rand"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -70,6 +71,9 @@ type Network struct {
 
 	rngMu sync.Mutex // rand.Rand is not safe for concurrent use
 	rng   *rand.Rand // seeded source for latency sampling
+
+	falseSuspect float64      // probability Reachable wrongly reports a reachable node as down
+	sent         atomic.Int64 // messages sent between different endpoints
 }
 
 // NewNetwork creates an empty network. lat applies between replicas,
@@ -157,10 +161,44 @@ func (n *Network) Heal() { n.Partition() }
 // Returns:
 //   - bool: true if both endpoints are in the same partition group.
 func (n *Network) Reachable(from, to string) bool {
+	if !n.connected(from, to) {
+		return false
+	}
+	n.mu.RLock()
+	p := n.falseSuspect
+	n.mu.RUnlock()
+	if p > 0 && from != to {
+		n.rngMu.Lock()
+		defer n.rngMu.Unlock()
+		return n.rng.Float64() >= p
+	}
+	return true
+}
+
+// connected reports whether the partition lets from talk to to. Unlike
+// Reachable it is the ground truth, never a wrong suspicion.
+func (n *Network) connected(from, to string) bool {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	return n.group[from] == n.group[to]
 }
+
+// SetFalseSuspicion makes Reachable report a reachable node as down with
+// probability p on every call (0 restores the exact detector). Messages
+// themselves are unaffected: only the coordinators' view is wrong, as with a
+// real failure detector that suspects a slow but live node.
+//
+// Parameters:
+//   - p: probability in [0, 1].
+func (n *Network) SetFalseSuspicion(p float64) {
+	n.mu.Lock()
+	n.falseSuspect = p
+	n.mu.Unlock()
+}
+
+// Sent returns how many messages have been sent between distinct endpoints
+// (each request counts once; replies are not counted).
+func (n *Network) Sent() int64 { return n.sent.Load() }
 
 // delay samples one one-way message delay from l.
 //
@@ -206,6 +244,7 @@ func (n *Network) Send(ctx context.Context, from, to string, req any) (any, erro
 		n.mu.RUnlock()
 		return h(from, req), nil
 	}
+	n.sent.Add(1)
 	// Buffered so the delivery goroutine can always finish, even if the
 	// caller has stopped waiting.
 	out := make(chan any, 1)
@@ -234,7 +273,7 @@ func (n *Network) Send(ctx context.Context, from, to string, req any) (any, erro
 		// The reply leg is checked separately: the request may have been
 		// processed (with its side effects) and only the answer lost, so
 		// the sender cannot tell a lost request from a lost reply.
-		if !n.Reachable(to, from) {
+		if !n.connected(to, from) {
 			return // reply dropped
 		}
 		out <- resp

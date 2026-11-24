@@ -59,6 +59,10 @@ func NewRingWithHash(nodes []string, vnodes int, hash64 func(string) uint64) *Ri
 	return r.index()
 }
 
+// Hash64 exposes the ring's key hash (MD5, first 8 bytes) so experiments can
+// compare placement schemes that hash keys the same way.
+func Hash64(s string) uint64 { return hash64(s) }
+
 // hash64 maps s onto the ring using the first 8 bytes of its MD5 digest.
 //
 // Parameters:
@@ -200,7 +204,9 @@ func (r *Ring) WithNode(id string) *Ring {
 	}
 	// Take evenly spaced partitions: spacing them out keeps the new node's
 	// pieces apart, so its load is spread like the other nodes'. Donors
-	// lose partitions in proportion to how many they own.
+	// lose partitions in proportion to how many they own. Balance after a
+	// join depends on how this stride interleaves with the old round-robin
+	// owners, which is why experiment A9 reports it for several Q.
 	want := len(r.tokens) / len(n.nodes)
 	for j := 0; j < want; j++ {
 		n.owner[n.tokens[j*len(n.tokens)/want]] = id

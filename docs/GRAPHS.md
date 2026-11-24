@@ -15,6 +15,8 @@ Charts live in `results/` as SVG (open in a browser; hover a bar or point for it
 | A4 | coordinator choice: load balance and staleness | `a4_load.svg`, `a4_stale.svg` |
 | A5 | replica timeout: failures, availability, latency | `a5_timeout.svg`, `a5_latency.svg` |
 
-`demo.txt` (the partition scenario) is a transcript, not a measurement, so it has no chart. The Merkle, lazy-tree and fixed-partition experiments (A6 to A8) are on separate branches and have their own charts there.
+Ablation charts (see [ABLATIONS.md](ABLATIONS.md)): X1 `x1_noise`, X2 `x2_stale` `x2_timeout`, X3 `x3_converge` `x3_idle`, X4 `x4_cluster`, X5 `x5_workload`, X6 `x6_handoff`, X7 `x7_repair` `x7_fanout`, X8 `x8_suspicion` `x8_shapes`, A9 `a9_q_balance` `a9_q_moved`, A10 `a10_roundtrips` `a10_kb`. A6 and A8 charts (Merkle, ring placement) are drawn by archbench too. X and A charts come from `cmd/bench -ablate` and `cmd/archbench`; E and A1 to A5 charts from `cmd/plots`.
+
+`demo.txt` (the partition scenario) is a transcript, not a measurement, so it has no chart.
 
 Chart code is the `chart` package (about 190 lines, standard library only).

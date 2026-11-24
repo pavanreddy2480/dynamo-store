@@ -1,5 +1,7 @@
 # Decision audit: what is proven, what is not
 
+> **Update (branch `ablations`).** Every gap listed in section 4 has now been run; see [ABLATIONS.md](ABLATIONS.md) for results. Short version: run-to-run noise is small (so the single-run worry was overblown); the latency model, workload and N do change the headline stale-read numbers, so report them as ranges; periodic anti-entropy was added and measured; hinted handoff had a real bug (fixed); modulo hashing, querying R instead of all N, and one-shot Merkle walks are now rejected with data. The ratings below are the state before those runs.
+
 Every design choice in the project, rated by how much evidence stands behind it today. Written 2026-11-24 after the Merkle, fixed-partition and vnode experiments. "Run" means an experiment that exists in the repo and was executed; "reasoned" means an argument in the docs but no measurement.
 
 **Ratings:** PROVEN (an experiment isolates the choice and the result is clear), PARTIAL (evidence exists but is thin or confounded), NONE (reasoned or arbitrary, nothing measured).

@@ -288,15 +288,17 @@ func (nd *Node) fullSync(peer string) error {
 }
 
 // merkleSync walks this node's trees for the partitions it shares with peer
-// against peer's, one level per round trip, then exchanges the keys under
-// the leaves that differ.
+// against peer's, one level per round trip (or, with MerkleOneShot, roots
+// first and then each differing partition's whole tree in one round trip),
+// then exchanges the keys under the leaves that differ.
 func (nd *Node) merkleSync(peer string) error {
 	var refs []nodeRef
 	for _, p := range nd.sharedWith(peer) {
 		refs = append(refs, nodeRef{p, 1})
 	}
 	leaves := 1 << nd.cfg.MerkleDepth
-	for len(refs) > 0 {
+	oneShot := false // the request in flight covers whole trees
+	for first := true; len(refs) > 0; first = false {
 		nd.mu.Lock()
 		hs := make([]uint64, len(refs))
 		for i, ref := range refs {
@@ -312,10 +314,31 @@ func (nd *Node) merkleSync(peer string) error {
 		if len(diff) == 0 {
 			return nil
 		}
+		if oneShot { // keep only the leaves among the differing nodes
+			var ls []nodeRef
+			for _, d := range diff {
+				if d.I >= leaves {
+					ls = append(ls, d)
+				}
+			}
+			if len(ls) == 0 {
+				return nil
+			}
+			return nd.leafSync(peer, ls)
+		}
 		if diff[0].I >= leaves { // leaves reached
 			return nd.leafSync(peer, diff)
 		}
 		refs = refs[:0:0]
+		if nd.cfg.MerkleOneShot && first && nd.cfg.MerkleDepth > 0 {
+			for _, d := range diff {
+				for i := 2; i < 2*leaves; i++ {
+					refs = append(refs, nodeRef{d.P, i})
+				}
+			}
+			oneShot = true
+			continue
+		}
 		for _, d := range diff {
 			refs = append(refs, nodeRef{d.P, 2 * d.I}, nodeRef{d.P, 2*d.I + 1})
 		}

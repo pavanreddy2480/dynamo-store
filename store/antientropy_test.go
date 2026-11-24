@@ -248,3 +248,38 @@ func TestMerkleRepairsPartition(t *testing.T) {
 		c.Close()
 	}
 }
+
+// The one-shot tree fetch must converge exactly like the level-by-level
+// walk, and the periodic loop must converge a diverged cluster by itself.
+func TestMerkleOneShotAndPeriodic(t *testing.T) {
+	for seed := int64(1); seed <= 5; seed++ {
+		cfg := fastConfig(MerkleSync)
+		cfg.Node.MerkleOneShot = true
+		c := NewCluster(cfg)
+		want := seedDivergent(t, seed, 300, c)
+		syncRound(t, c)
+		checkConverged(t, c, want, fmt.Sprintf("one-shot seed %d", seed))
+		c.Close()
+	}
+	cfg := fastConfig(MerkleSync)
+	cfg.Node.AntiEntropyInterval = 5 * time.Millisecond
+	c := NewCluster(cfg)
+	defer c.Close()
+	want := seedDivergent(t, 9, 100, c)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		ok := true
+		for key, w := range want {
+			for _, id := range c.PreferenceList(key) {
+				ok = ok && fmt.Sprint(c.Nodes[id].Snapshot(key)) == fmt.Sprint(w)
+			}
+		}
+		if ok {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("periodic anti-entropy did not converge in 10s")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

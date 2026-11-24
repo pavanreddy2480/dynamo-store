@@ -23,17 +23,17 @@ MD5 ring, 5 nodes, N=3, 20000 keys, averaged over 20 placements (each placement 
 
 | vnodes/node | tokens | mean CV | mean spread | worst spread | mean moved on join | worst moved | lookup ns | build µs |
 |---|---|---|---|---|---|---|---|---|
-| 1 | 5 | 0.314 | 48.9 | 92.7 | 21.7% | 31.5% | 217 | 5 |
-| 2 | 10 | 0.291 | 48.1 | 84.2 | 22.2% | 30.6% | 211 | 36 |
-| 4 | 20 | 0.242 | 40.4 | 73.3 | 20.9% | 30.5% | 218 | 18 |
-| 8 | 40 | 0.191 | 31.3 | 52.3 | 20.3% | 25.7% | 230 | 52 |
-| 16 | 80 | 0.112 | 18.1 | 36.2 | 20.0% | 24.1% | 259 | 102 |
-| 32 | 160 | 0.095 | 15.4 | 29.4 | 19.6% | 22.7% | 243 | 178 |
-| 64 | 320 | 0.064 | 10.6 | 22.0 | 19.9% | 23.0% | 241 | 340 |
-| 128 | 640 | 0.043 | 7.1 | 13.9 | 20.1% | 21.7% | 257 | 848 |
-| 256 | 1280 | 0.035 | 5.9 | 11.5 | 20.0% | 21.4% | 263 | 1588 |
-| 512 | 2560 | 0.025 | 4.1 | 6.9 | 20.0% | 20.9% | 339 | 3823 |
-| 1024 | 5120 | 0.016 | 2.6 | 4.5 | 20.2% | 20.6% | 273 | 6336 |
+| 1 | 5 | 0.314 | 48.9 | 92.7 | 21.7% | 31.5% | 206 | 8 |
+| 2 | 10 | 0.291 | 48.1 | 84.2 | 22.2% | 30.6% | 213 | 10 |
+| 4 | 20 | 0.242 | 40.4 | 73.3 | 20.9% | 30.5% | 223 | 19 |
+| 8 | 40 | 0.191 | 31.3 | 52.3 | 20.3% | 25.7% | 236 | 54 |
+| 16 | 80 | 0.112 | 18.1 | 36.2 | 20.0% | 24.1% | 235 | 76 |
+| 32 | 160 | 0.095 | 15.4 | 29.4 | 19.6% | 22.7% | 234 | 144 |
+| 64 | 320 | 0.064 | 10.6 | 22.0 | 19.9% | 23.0% | 242 | 425 |
+| 128 | 640 | 0.043 | 7.1 | 13.9 | 20.1% | 21.7% | 263 | 895 |
+| 256 | 1280 | 0.035 | 5.9 | 11.5 | 20.0% | 21.4% | 303 | 1330 |
+| 512 | 2560 | 0.025 | 4.1 | 6.9 | 20.0% | 20.9% | 261 | 2947 |
+| 1024 | 5120 | 0.016 | 2.6 | 4.5 | 20.2% | 20.6% | 284 | 6510 |
 
 ![balance](a1b_balance.svg)
 ![moved](a1b_moved.svg)
@@ -45,12 +45,12 @@ MD5 ring, 5 nodes, N=3, 20000 keys, averaged over 20 placements (each placement 
 
 | clocks | replication payload | R,W | acked items | lost items |
 |---|---|---|---|---|
-| dotted version vector | whole sibling set | 1,1 | 8649 | 0 (0.00%) |
-| dotted version vector | whole sibling set | 2,2 | 5707 | 0 (0.00%) |
-| dotted version vector | new version only | 1,1 | 8750 | 0 (0.00%) |
-| dotted version vector | new version only | 2,2 | 5792 | 3 (0.05%) |
-| per-node vector clock | whole sibling set | 1,1 | 11306 | 2273 (20.10%) |
-| per-node vector clock | whole sibling set | 2,2 | 5671 | 1478 (26.06%) |
+| dotted version vector | whole sibling set | 1,1 | 8626 | 0 (0.00%) |
+| dotted version vector | whole sibling set | 2,2 | 5703 | 0 (0.00%) |
+| dotted version vector | new version only | 1,1 | 8802 | 2 (0.02%) |
+| dotted version vector | new version only | 2,2 | 5717 | 3 (0.05%) |
+| per-node vector clock | whole sibling set | 1,1 | 11218 | 2253 (20.08%) |
+| per-node vector clock | whole sibling set | 2,2 | 5639 | 1473 (26.12%) |
 
 ## A3. Repair mechanisms after a partition heals
 
@@ -58,11 +58,11 @@ Sloppy R=1 W=2 writes on both sides of a {n1,n2} | {n3,n4,n5} partition for 1s, 
 
 | repair after heal | acked writes | under-replicated | divergent keys (of 64) |
 |---|---|---|---|
-| none | 1115 | 1007 (90.3%) | 54 |
-| hinted handoff only | 1109 | 527 (47.5%) | 64 |
-| read repair only (one R=3 read per key) | 1129 | 75 (6.6%) | 0 |
-| anti-entropy only (one round) | 1119 | 72 (6.4%) | 0 |
-| hinted handoff + anti-entropy (default) | 1119 | 0 (0.0%) | 0 |
+| none | 1119 | 1009 (90.2%) | 54 |
+| hinted handoff only | 1128 | 537 (47.6%) | 64 |
+| read repair only (one R=3 read per key) | 1138 | 73 (6.4%) | 0 |
+| anti-entropy only (one round) | 1121 | 72 (6.4%) | 0 |
+| hinted handoff + anti-entropy (default) | 1123 | 0 (0.0%) | 0 |
 
 ## A4. Choosing the coordinator
 
@@ -71,7 +71,7 @@ Same workload as E1 (32 keys, one writer each, 16 readers), R=1 W=1, for 2s. Loa
 | coordinator | stale reads | coordinator load share n1..n5 | busiest node |
 |---|---|---|---|
 | always first preferred replica | 0.1% | 16% / 16% / 22% / 25% / 22% | 25% |
-| random preferred replica (default) | 26.3% | 21% / 18% / 18% / 21% / 23% | 23% |
+| random preferred replica (default) | 26.5% | 21% / 18% / 18% / 21% / 23% | 23% |
 
 ## A5. Replica timeout
 
@@ -79,10 +79,10 @@ How long a coordinator waits for replicas. Strict R=W=2, 64 keys, partition {n1,
 
 | replica timeout | no partition: put p99 ms | no partition: put failures | partitioned: failed-op latency p50 ms | partitioned: put availability |
 |---|---|---|---|---|
-| 2ms | 5.75 | 83.19% | 3.67 | 10.4% |
-| 5ms | 10.40 | 8.58% | 6.91 | 45.2% |
-| 20ms | 12.29 | 0.00% | 22.48 | 48.7% |
-| 100ms | 11.41 | 0.00% | 102.73 | 47.4% |
+| 2ms | 5.57 | 84.38% | 3.63 | 10.7% |
+| 5ms | 10.29 | 7.62% | 6.98 | 44.3% |
+| 20ms | 13.53 | 0.00% | 22.43 | 48.4% |
+| 100ms | 12.66 | 0.00% | 102.61 | 47.5% |
 
 ## A6. Anti-entropy: full-state exchange vs Merkle trees
 
@@ -90,12 +90,12 @@ How long a coordinator waits for replicas. Strict R=W=2, 64 keys, partition {n1,
 
 | strategy | divergence | keys sent | KB sent | round trips | time | divergent keys after |
 |---|---|---|---|---|---|---|
-| full-state | 0% | 120000 | 6966.2 | 10 | 286ms | 0 |
-| full-state | 1% | 120000 | 6975.9 | 10 | 268ms | 0 |
-| full-state | 10% | 120000 | 7062.4 | 10 | 290ms | 0 |
-| Merkle (per partition) | 0% | 0 | 9.0 | 10 | 39ms | 0 |
-| Merkle (per partition) | 1% | 832 | 151.0 | 70 | 281ms | 0 |
-| Merkle (per partition) | 10% | 8240 | 1145.4 | 70 | 349ms | 0 |
+| full-state | 0% | 120000 | 6966.2 | 10 | 274ms | 0 |
+| full-state | 1% | 120000 | 6975.9 | 10 | 285ms | 0 |
+| full-state | 10% | 120000 | 7062.4 | 10 | 283ms | 0 |
+| Merkle (per partition) | 0% | 0 | 9.0 | 10 | 38ms | 0 |
+| Merkle (per partition) | 1% | 832 | 151.0 | 70 | 285ms | 0 |
+| Merkle (per partition) | 10% | 8240 | 1145.4 | 70 | 337ms | 0 |
 
 ![keys sent](a6_keys_sent.svg)
 ![bytes sent](a6_bytes_sent.svg)
@@ -136,3 +136,44 @@ Depth of each partition's tree (leaves = 2^depth) at 1% and 10% divergence:
 
 ![balance](a8_balance.svg)
 ![moved](a8_moved.svg)
+
+## A9. How many fixed partitions, and why not modulo hashing?
+
+100000 keys, N=3, 5 nodes after a join from 4. Spread = most-loaded minus least-loaded node's share of replica copies, in points (ideal 0). Moved = replica copies that must move on the join (ideal 20%). The modulo baseline puts a key on node hash%N and the next two nodes.
+
+| scheme | partitions per node | spread (pts) | copies moved on join |
+|---|---|---|---|
+| fixed, Q=16 | 3.2 | 18.9 | 18.7% |
+| fixed, Q=32 | 6.4 | 18.9 | 18.8% |
+| fixed, Q=64 | 12.8 | 18.9 | 18.8% |
+| fixed, Q=128 | 25.6 | 2.5 | 19.6% |
+| fixed, Q=256 | 51.2 | 1.0 | 19.9% |
+| fixed, Q=512 | 102.4 | 1.4 | 19.9% |
+| fixed, Q=1024 | 204.8 | 1.3 | 20.0% |
+| fixed, Q=4096 | 819.2 | 0.5 | 20.1% |
+| modulo hash | - | 0.2 | 40.0% |
+
+![balance](a9_q_balance.svg)
+![moved](a9_q_moved.svg)
+
+## A10. Merkle walk: one level per round trip vs whole tree at once
+
+A6's setup (20,000 keys, 256 partitions, one round over 10 node pairs). Level-by-level sends only the hashes under subtrees that differ but needs one round trip per level; one-shot sends every hash of a differing partition's tree after the roots.
+
+| depth | divergence | walk | round trips | hashes sent | KB sent | time |
+|---|---|---|---|---|---|---|
+| 2 | 1% | level by level | 50 | 9885 | 221.7 | 213ms |
+| 2 | 1% | one shot | 40 | 10443 | 228.2 | 180ms |
+| 2 | 10% | level by level | 50 | 47936 | 1397.5 | 284ms |
+| 2 | 10% | one shot | 40 | 48212 | 1400.7 | 249ms |
+| 4 | 1% | level by level | 70 | 6042 | 151.0 | 281ms |
+| 4 | 1% | one shot | 40 | 12696 | 229.0 | 171ms |
+| 4 | 10% | level by level | 70 | 34554 | 1145.4 | 333ms |
+| 4 | 10% | one shot | 40 | 42782 | 1241.9 | 220ms |
+| 6 | 1% | level by level | 90 | 6262 | 149.2 | 363ms |
+| 6 | 1% | one shot | 40 | 41982 | 567.8 | 176ms |
+| 6 | 10% | level by level | 90 | 37964 | 1159.3 | 416ms |
+| 6 | 10% | one shot | 40 | 104100 | 1934.3 | 214ms |
+
+![round trips](a10_roundtrips.svg)
+![kb](a10_kb.svg)

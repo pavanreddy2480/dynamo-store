@@ -13,6 +13,8 @@
 //   - A5 (a5_timeout.go): the coordinator's replica timeout.
 //   - A6 (a6_merkle.go): full-state vs Merkle anti-entropy, tree depth.
 //   - A8 (a8_partitions.go): equal spacing vs random vnodes vs fixed partitions.
+//   - A9 (a9_ringq.go): how many fixed partitions; modulo hashing baseline.
+//   - A10 (a10_oneshot.go): Merkle walk level by level vs whole tree at once.
 //
 // Everything printed to stdout is also collected and written, unchanged, to
 // <out>/architecture.md once all experiments have finished.
@@ -55,7 +57,7 @@ var experiments = []struct {
 	run func()
 }{
 	{"A1", ringBalance}, {"A1b", vnodeAblation}, {"A2", replication}, {"A3", repair},
-	{"A4", coordinatorChoice}, {"A5", timeouts}, {"A6", merkleVsFull}, {"A8", partitionExperiment},
+	{"A4", coordinatorChoice}, {"A5", timeouts}, {"A6", merkleVsFull}, {"A8", partitionExperiment}, {"A9", ringQ}, {"A10", merkleWalk},
 }
 
 // main parses flags, runs the experiments in order, and writes the

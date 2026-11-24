@@ -23,6 +23,9 @@ type Config struct {
 	Latency    LatencyModel // replica-to-replica message delay
 	Client     LatencyModel // delay of hops that start or end at a client
 	Seed       int64        // seeds the network's latency sampling
+	// FalseSuspicion is the probability the failure detector wrongly
+	// reports a reachable node as down (see Network.SetFalseSuspicion).
+	FalseSuspicion float64
 }
 
 // DefaultConfig is 5 nodes with 3 replicas per key.
@@ -90,6 +93,7 @@ func NewCluster(cfg Config) *Cluster {
 		IDs:   ids,
 		cfg:   cfg,
 	}
+	c.Net.SetFalseSuspicion(cfg.FalseSuspicion)
 	for _, id := range ids {
 		c.Nodes[id] = newNode(id, cfg.Node, c.Net, c.Ring)
 	}

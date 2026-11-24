@@ -8,6 +8,7 @@ package store
 
 import (
 	"fmt"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -30,7 +31,17 @@ type NodeConfig struct {
 	// default matters).
 	ReplicateNewOnly bool
 	AntiEntropy      SyncMode // how anti-entropy compares replicas
-	MerkleDepth      int      // levels below each partition tree's root: 1<<depth leaves
+	// AntiEntropyInterval, when positive, makes every node sync with one
+	// random reachable peer that often. Zero leaves anti-entropy to explicit
+	// Cluster.AntiEntropy calls.
+	AntiEntropyInterval time.Duration
+	// ReadFromRonly makes a read query only R replicas instead of all N
+	// (and so also disables read repair on the replicas not asked).
+	ReadFromROnly bool
+	// MerkleOneShot fetches a differing partition's whole tree in one round
+	// trip after the roots instead of walking it one level per round trip.
+	MerkleOneShot bool
+	MerkleDepth   int // levels below each partition tree's root: 1<<depth leaves
 }
 
 // Node is one storage replica. Any node can coordinate a request.
@@ -95,29 +106,39 @@ func newNode(id string, cfg NodeConfig, net *Network, ring *Ring) *Node {
 	return nd
 }
 
-// start launches the background loop that retries hinted handoff every
-// HandoffInterval. A zero interval disables it.
+// start launches the background loops: hinted handoff every
+// HandoffInterval and, if AntiEntropyInterval is positive, anti-entropy with
+// a random reachable peer. A zero interval disables the matching loop.
 //
-// The loop runs in its own goroutine until close is called. start must be
-// called at most once per node.
+// The loops run in their own goroutines until close is called. start must
+// be called at most once per node.
 func (nd *Node) start() {
-	if nd.cfg.HandoffInterval <= 0 {
-		return
-	}
-	nd.wg.Add(1)
-	go func() {
-		defer nd.wg.Done()
-		t := time.NewTicker(nd.cfg.HandoffInterval)
-		defer t.Stop()
-		for {
-			select {
-			case <-nd.stop:
-				return
-			case <-t.C:
-				nd.handoffHints()
-			}
+	loop := func(every time.Duration, f func()) {
+		if every <= 0 {
+			return
 		}
-	}()
+		nd.wg.Add(1)
+		go func() {
+			defer nd.wg.Done()
+			t := time.NewTicker(every)
+			defer t.Stop()
+			for {
+				select {
+				case <-nd.stop:
+					return
+				case <-t.C:
+					f()
+				}
+			}
+		}()
+	}
+	loop(nd.cfg.HandoffInterval, nd.handoffHints)
+	loop(nd.cfg.AntiEntropyInterval, func() {
+		peers := nd.ring.nodes
+		if p := peers[rand.Intn(len(peers))]; p != nd.ID && nd.net.Reachable(nd.ID, p) {
+			_ = nd.syncWith(p)
+		}
+	})
 }
 
 // rules returns the version-ordering rules this node is configured with.

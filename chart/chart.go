@@ -91,7 +91,18 @@ func (c *chart) save(path string) {
 // Bar draws vals[series][group] as grouped bars, each labelled with its
 // value, and saves it to path.
 func Bar(path, title, xLabel, yLabel string, groups, series []string, vals [][]float64, logY bool) {
-	c := newChart(title, xLabel, yLabel, series, maxOf(vals)*1.15, logY)
+	BarErr(path, title, xLabel, yLabel, groups, series, vals, nil, nil, logY)
+}
+
+// BarErr is Bar with a whisker on each bar from lo[series][group] to
+// hi[series][group] (for example the min and max over repeated runs). lo and
+// hi may be nil for no whiskers.
+func BarErr(path, title, xLabel, yLabel string, groups, series []string, vals, lo, hi [][]float64, logY bool) {
+	top := maxOf(vals)
+	if hi != nil {
+		top = math.Max(top, maxOf(hi))
+	}
+	c := newChart(title, xLabel, yLabel, series, top*1.15, logY)
 	gw := float64(chartW-padL-padR) / float64(len(groups))
 	bw := math.Min(48, (gw-24)/float64(len(series)))
 	for g, label := range groups {
@@ -103,6 +114,12 @@ func Bar(path, title, xLabel, yLabel string, groups, series []string, vals [][]f
 			if v > 0 { // a zero value is a label only, not a stub bar
 				fmt.Fprintf(&c.b, `<path d="M%.1f %d V%.1f a4 4 0 0 1 4 -4 H%.1f a4 4 0 0 1 4 4 V%d Z" fill="%s"><title>%s, %s: %s</title></path>`,
 					x+1, chartH-padB, math.Min(y+4, float64(chartH-padB)), x+bw-5, chartH-padB, palette[s], esc(series[s]), esc(label), num(v))
+			}
+			if lo != nil {
+				cx, yl, yh := x+bw/2, c.y(lo[s][g]), c.y(hi[s][g])
+				fmt.Fprintf(&c.b, `<path d="M%.1f %.1f V%.1f M%.1f %.1f H%.1f M%.1f %.1f H%.1f" stroke="%s" stroke-width="1.5" fill="none"/>`,
+					cx, yl, yh, cx-4, yl, cx+4, cx-4, yh, cx+4, ink)
+				y = math.Min(y, yh)
 			}
 			fmt.Fprintf(&c.b, `<text x="%.1f" y="%.1f" text-anchor="middle" font-size="11" fill="%s">%s</text>`, x+bw/2, y-4, inkSoft, num(v))
 		}
