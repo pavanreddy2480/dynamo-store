@@ -100,27 +100,27 @@ func checkConverged(t *testing.T, c *Cluster, want map[string][]Version, label s
 	}
 }
 
-// checkTreesMatchData fails t unless every node's Merkle trees equal trees
-// rebuilt from scratch from its data, i.e. incremental updates never drift.
+// checkTreesMatchData fails t unless every node's per-partition Merkle
+// trees equal trees rebuilt from scratch from its data, i.e. incremental
+// updates never drift.
 func checkTreesMatchData(t *testing.T, c *Cluster) {
 	t.Helper()
 	for _, nd := range c.Nodes {
 		nd.mu.Lock()
-		fresh := map[string]*merkle{}
+		fresh := map[int]*merkle{}
 		for k, vs := range nd.data {
-			pl := nd.ring.PreferenceList(k, nd.cfg.N)
-			for _, p := range pl {
-				if p != nd.ID && contains(pl, nd.ID) {
-					if fresh[p] == nil {
-						fresh[p] = newMerkle(nd.cfg.MerkleDepth)
-					}
-					fresh[p].set(k, nd.ring.hash(k), hashVersions(k, vs))
-				}
+			p, h := nd.ring.Partition(k)
+			if !contains(nd.ring.PartitionList(p, nd.cfg.N), nd.ID) {
+				continue
 			}
+			if fresh[p] == nil {
+				fresh[p] = newMerkle(nd.cfg.MerkleDepth)
+			}
+			fresh[p].set(k, h, hashVersions(k, vs))
 		}
-		for p, f := range fresh {
-			if nd.trees[p].h[1] != f.h[1] {
-				t.Errorf("%s: tree for %s drifted from its data", nd.ID, p)
+		for p, tr := range nd.trees {
+			if tr.h[1] != fresh[p].hash(1) {
+				t.Errorf("%s: tree of partition %d drifted from its data", nd.ID, p)
 			}
 		}
 		nd.mu.Unlock()

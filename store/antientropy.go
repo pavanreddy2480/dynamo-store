@@ -2,20 +2,23 @@
 // replicas agree on every key they share. Two strategies are kept so they
 // can be measured against each other (experiment A6):
 //
-//   - MerkleSync (default): compare per-peer Merkle trees top-down and send
-//     only the keys under leaves whose hashes differ.
+//   - MerkleSync (default): compare the Merkle trees of the partitions two
+//     nodes share, top-down, and send only the keys under leaves whose
+//     hashes differ.
 //   - FullStateSync: send every shared key both ways, whatever its state.
 //
-// A Merkle exchange started by node a with peer b:
+// A Merkle exchange started by node a with peer b. A partition is a gap
+// between two ring tokens; its replicas all keep the same tree for it:
 //
-//	a                                   b
-//	|-- merkleReq{[1], [root]} -------->|  compare with b's tree for a
-//	|<------------- merkleResp{diff} ---|  indices whose hashes differ
-//	|-- merkleReq{children of diff} --->|  ... one level per round trip,
-//	|<------------- merkleResp{diff} ---|      until diff holds only leaves
-//	|-- leafReq{leaves, key hashes} --->|
-//	|<--- leafResp{b's items, want} ----|  b sends keys whose hash differs
-//	|-- pushReq{a's items for want} --->|  and asks for the ones it lacks
+//	a                                    b
+//	|-- merkleReq{(p,root) for every ---->|  compare with b's tree for p
+//	|     partition p both replicate}     |
+//	|<------------- merkleResp{diff} -----|  (p, idx) pairs that differ
+//	|-- merkleReq{children of diff} ----->|  ... one level per round trip,
+//	|<------------- merkleResp{diff} -----|      until diff holds only leaves
+//	|-- leafReq{leaves, key hashes} ----->|
+//	|<--- leafResp{b's items, want} ------|  b sends keys whose hash differs
+//	|-- pushReq{a's items for want} ------>|  and asks for the ones it lacks
 //
 // Equal trees end the exchange after the first round trip.
 
@@ -85,17 +88,18 @@ type (
 	syncReq struct{ Items map[string][]Version }
 	// syncResp is the receiver's half of a full-state exchange.
 	syncResp struct{ Items map[string][]Version }
-	// merkleReq sends the sender's hashes for some heap indices of its
-	// tree for the receiver.
+	// nodeRef names one node of one partition's Merkle tree.
+	nodeRef struct{ P, I int } // partition, heap index
+	// merkleReq sends the sender's hashes for some tree nodes.
 	merkleReq struct {
-		Nodes  []int    // heap indices
-		Hashes []uint64 // the sender's hash at each index
+		Refs   []nodeRef
+		Hashes []uint64 // the sender's hash at each ref
 	}
-	// merkleResp lists the indices of a merkleReq whose hashes differ.
-	merkleResp struct{ Diff []int }
+	// merkleResp lists the refs of a merkleReq whose hashes differ.
+	merkleResp struct{ Diff []nodeRef }
 	// leafReq sends every key hash under leaves that differ.
 	leafReq struct {
-		Leaves []int             // differing leaves (heap indices)
+		Leaves []nodeRef         // differing leaves
 		Keys   map[string]uint64 // the sender's keys under them
 	}
 	// leafResp returns the receiver's versions for keys whose hashes
@@ -109,8 +113,9 @@ type (
 	pushReq struct{ Items map[string][]Version }
 )
 
-// put stores a merged sibling set for an owned key and keeps the per-peer
-// Merkle trees in step. Every write to nd.data goes through it.
+// put stores a merged sibling set for an owned key and keeps the Merkle
+// tree of the key's partition in step. Every write to nd.data goes through
+// it.
 //
 // The caller holds nd.mu.
 //
@@ -122,27 +127,27 @@ func (nd *Node) put(k string, vs []Version) {
 	if nd.cfg.AntiEntropy != MerkleSync {
 		return
 	}
-	pl := nd.ring.PreferenceList(k, nd.cfg.N)
-	if !contains(pl, nd.ID) {
+	p, h := nd.ring.Partition(k)
+	if !contains(nd.ring.PartitionList(p, nd.cfg.N), nd.ID) {
 		return
 	}
-	rh, kh := nd.ring.hash(k), hashVersions(k, vs)
-	for _, p := range pl {
-		if p != nd.ID {
-			nd.tree(p).set(k, rh, kh)
-		}
-	}
-}
-
-// tree returns this node's Merkle tree for peer, creating it if needed.
-// The caller holds nd.mu.
-func (nd *Node) tree(peer string) *merkle {
-	t := nd.trees[peer]
+	t := nd.trees[p]
 	if t == nil {
 		t = newMerkle(nd.cfg.MerkleDepth)
-		nd.trees[peer] = t
+		nd.trees[p] = t
 	}
-	return t
+	t.set(k, h, hashVersions(k, vs))
+}
+
+// sharedWith lists the partitions that both this node and peer replicate.
+func (nd *Node) sharedWith(peer string) []int {
+	var out []int
+	for p := range nd.ring.plists {
+		if pl := nd.ring.PartitionList(p, nd.cfg.N); contains(pl, nd.ID) && contains(pl, peer) {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // contains reports whether s holds x.
@@ -206,15 +211,14 @@ func (nd *Node) handleSync(from string, r syncReq) syncResp {
 }
 
 // handleMerkle answers a merkleReq: which of the sender's hashes differ
-// from this node's tree for the sender.
-func (nd *Node) handleMerkle(from string, r merkleReq) merkleResp {
+// from this node's trees.
+func (nd *Node) handleMerkle(r merkleReq) merkleResp {
 	nd.mu.Lock()
 	defer nd.mu.Unlock()
-	t := nd.tree(from)
-	var diff []int
-	for i, idx := range r.Nodes {
-		if t.h[idx] != r.Hashes[i] {
-			diff = append(diff, idx)
+	var diff []nodeRef
+	for i, ref := range r.Refs {
+		if nd.trees[ref.P].hash(ref.I) != r.Hashes[i] {
+			diff = append(diff, ref)
 		}
 	}
 	return merkleResp{Diff: diff}
@@ -223,13 +227,12 @@ func (nd *Node) handleMerkle(from string, r merkleReq) merkleResp {
 // handleLeaf answers a leafReq: send this node's versions of every key
 // under the given leaves whose hash differs from the sender's, and ask for
 // every key the sender has with a hash this node does not.
-func (nd *Node) handleLeaf(from string, r leafReq) leafResp {
+func (nd *Node) handleLeaf(r leafReq) leafResp {
 	nd.mu.Lock()
 	defer nd.mu.Unlock()
-	t := nd.tree(from)
 	resp := leafResp{Items: map[string][]Version{}}
 	for _, leaf := range r.Leaves {
-		for k, h := range t.leafKeys(leaf) {
+		for k, h := range nd.trees[leaf.P].leafKeys(leaf.I) {
 			if r.Keys[k] != h {
 				resp.Items[k] = cloneVersions(nd.data[k])
 			}
@@ -284,44 +287,48 @@ func (nd *Node) fullSync(peer string) error {
 	return nil
 }
 
-// merkleSync walks this node's tree for peer against peer's tree for this
-// node, one level per round trip, then exchanges the keys under the leaves
-// that differ.
+// merkleSync walks this node's trees for the partitions it shares with peer
+// against peer's, one level per round trip, then exchanges the keys under
+// the leaves that differ.
 func (nd *Node) merkleSync(peer string) error {
-	nodes := []int{1}
-	for {
+	var refs []nodeRef
+	for _, p := range nd.sharedWith(peer) {
+		refs = append(refs, nodeRef{p, 1})
+	}
+	leaves := 1 << nd.cfg.MerkleDepth
+	for len(refs) > 0 {
 		nd.mu.Lock()
-		t := nd.tree(peer)
-		hs := make([]uint64, len(nodes))
-		for i, idx := range nodes {
-			hs[i] = t.h[idx]
+		hs := make([]uint64, len(refs))
+		for i, ref := range refs {
+			hs[i] = nd.trees[ref.P].hash(ref.I)
 		}
 		nd.mu.Unlock()
-		resp, err := nd.send(peer, merkleReq{Nodes: nodes, Hashes: hs})
+		resp, err := nd.send(peer, merkleReq{Refs: refs, Hashes: hs})
 		if err != nil {
 			return err
 		}
 		diff := resp.(merkleResp).Diff
-		nd.stats.add(len(nodes), nil, 4*len(nodes)+4*len(diff))
+		nd.stats.add(len(refs), nil, 4*len(refs)+4*len(diff))
 		if len(diff) == 0 {
 			return nil
 		}
-		if diff[0] >= len(t.h)/2 { // leaves reached
+		if diff[0].I >= leaves { // leaves reached
 			return nd.leafSync(peer, diff)
 		}
-		nodes = nodes[:0:0]
-		for _, i := range diff {
-			nodes = append(nodes, 2*i, 2*i+1)
+		refs = refs[:0:0]
+		for _, d := range diff {
+			refs = append(refs, nodeRef{d.P, 2 * d.I}, nodeRef{d.P, 2*d.I + 1})
 		}
 	}
+	return nil
 }
 
 // leafSync exchanges the keys under the given differing leaves with peer.
-func (nd *Node) leafSync(peer string, leaves []int) error {
+func (nd *Node) leafSync(peer string, leaves []nodeRef) error {
 	nd.mu.Lock()
 	keys := map[string]uint64{}
 	for _, leaf := range leaves {
-		for k, h := range nd.tree(peer).leafKeys(leaf) {
+		for k, h := range nd.trees[leaf.P].leafKeys(leaf.I) {
 			keys[k] = h
 		}
 	}

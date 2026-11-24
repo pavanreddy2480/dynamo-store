@@ -23,6 +23,7 @@ type Ring struct {
 	owner  map[uint64]string   // token -> physical node
 	nodes  []string            // physical nodes
 	hash   func(string) uint64 // maps keys and tokens onto the ring
+	plists [][]string          // plists[i]: Walk order for keys in partition i
 }
 
 // NewRing places vnodes tokens per physical node, hashing with MD5.
@@ -55,8 +56,7 @@ func NewRingWithHash(nodes []string, vnodes int, hash64 func(string) uint64) *Ri
 			r.owner[t] = n
 		}
 	}
-	sort.Slice(r.tokens, func(i, j int) bool { return r.tokens[i] < r.tokens[j] })
-	return r
+	return r.index()
 }
 
 // hash64 maps s onto the ring using the first 8 bytes of its MD5 digest.
@@ -71,6 +71,51 @@ func hash64(s string) uint64 {
 	return binary.BigEndian.Uint64(sum[:8])
 }
 
+// Partition returns the index of the partition (the gap between two
+// consecutive tokens) that key falls in. Every key of a partition has the
+// same preference list, which is what lets replicas keep one Merkle tree
+// per partition.
+//
+// Parameters:
+//   - key: the key to place on the ring.
+//
+// Returns:
+//   - int: the key's partition, in [0, number of tokens).
+//   - uint64: the key's ring hash, so callers need not hash it again.
+func (r *Ring) Partition(key string) (int, uint64) {
+	h := r.hash(key)
+	// The key belongs to the first token at or after its hash; the modulo
+	// wraps past the last token back to the start of the ring.
+	return sort.Search(len(r.tokens), func(i int) bool { return r.tokens[i] >= h }) % len(r.tokens), h
+}
+
+// walkFrom lists every physical node in ring order starting at token i,
+// skipping nodes already listed, so consecutive tokens of one physical node
+// never count as two replicas.
+func (r *Ring) walkFrom(i int) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(r.nodes))
+	for j := 0; j < len(r.tokens) && len(out) < len(r.nodes); j++ {
+		n := r.owner[r.tokens[(i+j)%len(r.tokens)]]
+		if !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// index sorts the tokens and precomputes every partition's walk. Every
+// constructor calls it last.
+func (r *Ring) index() *Ring {
+	sort.Slice(r.tokens, func(i, j int) bool { return r.tokens[i] < r.tokens[j] })
+	r.plists = make([][]string, len(r.tokens))
+	for i := range r.tokens {
+		r.plists[i] = r.walkFrom(i)
+	}
+	return r
+}
+
 // Walk returns every physical node in ring order starting at key's
 // position, without duplicates. The first N entries are the key's
 // preference list; the rest are the fallbacks used by sloppy quorums.
@@ -80,23 +125,26 @@ func hash64(s string) uint64 {
 //
 // Returns:
 //   - []string: all physical node ids, each exactly once, in walk order.
+//     The slice is shared; callers must not modify it.
 func (r *Ring) Walk(key string) []string {
-	h := r.hash(key)
-	// The key belongs to the first token at or after its hash; the modulo
-	// below wraps past the last token back to the start of the ring.
-	i := sort.Search(len(r.tokens), func(i int) bool { return r.tokens[i] >= h })
-	seen := map[string]bool{}
-	out := make([]string, 0, len(r.nodes))
-	// Skip tokens of nodes already listed, so consecutive vnodes of one
-	// physical node never count as two replicas.
-	for j := 0; j < len(r.tokens) && len(out) < len(r.nodes); j++ {
-		n := r.owner[r.tokens[(i+j)%len(r.tokens)]]
-		if !seen[n] {
-			seen[n] = true
-			out = append(out, n)
-		}
+	p, _ := r.Partition(key)
+	return r.plists[p]
+}
+
+// PartitionList returns the n replicas of partition p.
+//
+// Parameters:
+//   - p: a partition index from Partition.
+//   - n: the number of replicas; capped at the number of physical nodes.
+//
+// Returns:
+//   - []string: the first n nodes of the partition's walk (shared; do not
+//     modify).
+func (r *Ring) PartitionList(p, n int) []string {
+	if n > len(r.nodes) {
+		n = len(r.nodes)
 	}
-	return out
+	return r.plists[p][:n]
 }
 
 // PreferenceList returns the n replicas responsible for key.
@@ -108,11 +156,8 @@ func (r *Ring) Walk(key string) []string {
 // Returns:
 //   - []string: the first n distinct nodes of Walk(key).
 func (r *Ring) PreferenceList(key string, n int) []string {
-	w := r.Walk(key)
-	if n > len(w) {
-		n = len(w)
-	}
-	return w[:n]
+	p, _ := r.Partition(key)
+	return r.PartitionList(p, n)
 }
 
 // NewFixedRing divides the hash space into q equal partitions and deals
@@ -134,7 +179,7 @@ func NewFixedRing(nodes []string, q int) *Ring {
 		r.tokens = append(r.tokens, t)
 		r.owner[t] = nodes[i%len(nodes)]
 	}
-	return r
+	return r.index()
 }
 
 // WithNode returns a copy of a fixed ring after node id joins: it takes its
@@ -160,7 +205,7 @@ func (r *Ring) WithNode(id string) *Ring {
 	for j := 0; j < want; j++ {
 		n.owner[n.tokens[j*len(n.tokens)/want]] = id
 	}
-	return n
+	return n.index()
 }
 
 // WithoutNode returns a copy of a fixed ring after node id leaves: each of
@@ -196,5 +241,5 @@ func (r *Ring) WithoutNode(id string) *Ring {
 		n.owner[t] = to
 		count[to]++
 	}
-	return n
+	return n.index()
 }

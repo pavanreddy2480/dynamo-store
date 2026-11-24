@@ -38,16 +38,33 @@ func TestFixedRingJoinAndLeave(t *testing.T) {
 	}
 }
 
-// Merkle anti-entropy converges on a fixed-partition ring exactly as it
-// does on random vnodes.
-func TestMerkleOnFixedRing(t *testing.T) {
+// Merkle anti-entropy converges on the older random-vnode ring exactly as
+// it does on the default fixed-partition ring (each token gap is a
+// partition with its own tree).
+func TestMerkleOnRandomVnodes(t *testing.T) {
 	for seed := int64(1); seed <= 5; seed++ {
 		cfg := fastConfig(MerkleSync)
-		cfg.Partitions = 256
+		cfg.Partitions = 0
 		c := NewCluster(cfg)
 		want := seedDivergent(t, seed, 300, c)
 		syncRound(t, c)
-		checkConverged(t, c, want, fmt.Sprintf("fixed ring seed %d", seed))
+		checkConverged(t, c, want, fmt.Sprintf("random vnodes seed %d", seed))
+		checkTreesMatchData(t, c)
 		c.Close()
+	}
+}
+
+// A join changes only who owns some partitions; the partition a key falls
+// in never changes, so per-partition trees stay valid across it.
+func TestPartitionOfKeyStableAcrossJoin(t *testing.T) {
+	four := NewFixedRing([]string{"n1", "n2", "n3", "n4"}, 256)
+	five := four.WithNode("n5")
+	for k := 0; k < 2000; k++ {
+		key := fmt.Sprintf("user:%d", k)
+		a, _ := four.Partition(key)
+		b, _ := five.Partition(key)
+		if a != b {
+			t.Fatalf("%s moved from partition %d to %d", key, a, b)
+		}
 	}
 }

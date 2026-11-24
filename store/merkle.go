@@ -1,6 +1,8 @@
-// This file implements the Merkle tree a node keeps for each peer it shares
-// keys with. Anti-entropy compares two such trees top-down and only
-// exchanges the keys under leaves whose hashes differ (see repair.go).
+// This file implements the Merkle tree a node keeps for each ring partition
+// it replicates. Every replica of a partition keeps an identical tree, so
+// anti-entropy between two replicas compares the trees of the partitions
+// they share top-down and exchanges only the keys under leaves whose hashes
+// differ (see antientropy.go).
 //
 //	                 h[1]  root
 //	              /        \
@@ -9,8 +11,8 @@
 //	      h[4]   h[5]   h[6]   h[7]   leaves: XOR of their keys' hashes
 //	      k1,k9  k4     -      k2,k7
 //
-// A key's leaf is fixed by the top bits of its ring hash, so two nodes put
-// the same key in the same leaf. A leaf hash is the XOR of its keys'
+// A key's leaf is fixed by its ring hash, so two replicas put the same key
+// in the same leaf. A leaf hash is the XOR of its keys'
 // hashes, so changing one key updates its leaf in O(1); the path to the
 // root is then rehashed in O(depth).
 
@@ -21,7 +23,7 @@ import (
 	"strconv"
 )
 
-// merkle is a binary hash tree over the keys one node shares with one peer.
+// merkle is a binary hash tree over the keys of one ring partition.
 //
 // It is stored as an implicit heap: h[1] is the root, the children of h[i]
 // are h[2i] and h[2i+1], and the leaves are h[L..2L) with L = 1<<depth.
@@ -55,7 +57,9 @@ func (t *merkle) leafOf(ringHash uint64) int {
 	if t.depth == 0 {
 		return 1
 	}
-	return 1<<t.depth + int(ringHash>>(64-t.depth))
+	// Mix first: the top bits of a ring hash are the same for every key of
+	// a partition, so they cannot spread the keys over the leaves.
+	return 1<<t.depth + int(splitmix(ringHash)>>(64-t.depth))
 }
 
 // set records that key now hashes to kh (0 removes the key), updating its
@@ -105,6 +109,15 @@ func (t *merkle) rehash(i int) int {
 	return n
 }
 
+// hash returns the hash at heap index i; a nil tree (a partition with no
+// keys yet) is all zeros.
+func (t *merkle) hash(i int) uint64 {
+	if t == nil {
+		return 0
+	}
+	return t.h[i]
+}
+
 // leafKeys returns a copy of the key hashes stored under leaf i.
 //
 // Parameters:
@@ -114,6 +127,9 @@ func (t *merkle) rehash(i int) int {
 //   - map[string]uint64: key -> key hash; empty for an empty leaf.
 func (t *merkle) leafKeys(i int) map[string]uint64 {
 	out := map[string]uint64{}
+	if t == nil {
+		return out
+	}
 	for k, h := range t.keys[i-len(t.keys)] {
 		out[k] = h
 	}

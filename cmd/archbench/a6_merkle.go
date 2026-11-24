@@ -82,7 +82,7 @@ func merkleVsFull() {
 	modes := []struct {
 		name string
 		m    store.SyncMode
-	}{{"full-state", store.FullStateSync}, {"Merkle (depth 10)", store.MerkleSync}}
+	}{{"full-state", store.FullStateSync}, {"Merkle (per partition)", store.MerkleSync}}
 	keys, kb := make([][]float64, len(modes)), make([][]float64, len(modes))
 	for i, m := range modes {
 		for _, d := range divs {
@@ -100,8 +100,8 @@ func merkleVsFull() {
 	barChart("a6_bytes_sent.svg", "KB sent in one anti-entropy round (20,000 keys, log scale)", "fraction of keys that differ on one replica", "KB sent", groups, names, kb, true)
 	w("\n![keys sent](a6_keys_sent.svg)\n![bytes sent](a6_bytes_sent.svg)\n")
 
-	w("\nTree depth (leaves = 2^depth) at 1%% and 10%% divergence:\n\n| depth | divergence | keys sent | hashes sent | KB sent | round trips |\n|---|---|---|---|---|---|\n")
-	depths := []float64{4, 6, 8, 10, 12, 14}
+	w("\nDepth of each partition's tree (leaves = 2^depth) at 1%% and 10%% divergence:\n\n| depth | divergence | keys sent | hashes sent | KB sent | round trips |\n|---|---|---|---|---|---|\n")
+	depths := []float64{0, 1, 2, 3, 4, 5, 6, 8}
 	dkb := make([][]float64, 2)
 	for i, d := range []float64{0.01, 0.10} {
 		for _, depth := range depths {
@@ -112,6 +112,6 @@ func merkleVsFull() {
 			dkb[i] = append(dkb[i], float64(r.s.Bytes)/1024)
 		}
 	}
-	lineChart("a6_depth.svg", "KB sent per round vs Merkle tree depth (20,000 keys)", "tree depth (2^depth leaves)", "KB sent", depths, []string{"1% diverged", "10% diverged"}, dkb, false)
+	lineChart("a6_depth.svg", "KB sent per round vs depth of each partition tree (20,000 keys, 256 partitions)", "tree depth per partition (2^depth leaves)", "KB sent", depths, []string{"1% diverged", "10% diverged"}, dkb, false)
 	w("\n![depth](a6_depth.svg)\n")
 }

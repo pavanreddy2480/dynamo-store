@@ -34,15 +34,16 @@ type Config struct {
 //   - Config: a fresh configuration the caller may modify.
 func DefaultConfig() Config {
 	return Config{
-		Nodes:  5,
-		VNodes: 64,
+		Nodes:      5,
+		VNodes:     64,
+		Partitions: 256,
 		Node: NodeConfig{
 			N:               3,
 			Policy:          KeepSiblings,
 			ReplicaTimeout:  20 * time.Millisecond,
 			ReadRepair:      true,
 			HandoffInterval: 5 * time.Millisecond,
-			MerkleDepth:     10,
+			MerkleDepth:     4,
 		},
 		Latency: DefaultLatency,
 		Client:  DefaultClientLatency,

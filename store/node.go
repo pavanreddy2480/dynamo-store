@@ -30,7 +30,7 @@ type NodeConfig struct {
 	// default matters).
 	ReplicateNewOnly bool
 	AntiEntropy      SyncMode // how anti-entropy compares replicas
-	MerkleDepth      int      // levels below a Merkle root: 1<<depth leaves
+	MerkleDepth      int      // levels below each partition tree's root: 1<<depth leaves
 }
 
 // Node is one storage replica. Any node can coordinate a request.
@@ -52,7 +52,7 @@ type Node struct {
 	data   map[string][]Version            // key -> sibling set for keys this node owns
 	hints  map[string]map[string][]Version // intended owner -> key -> versions
 	issued map[string]uint64               // highest counter this node issued per key
-	trees  map[string]*merkle              // peer -> Merkle tree of the keys shared with it
+	trees  map[int]*merkle                 // partition -> Merkle tree of its keys (replicated partitions only)
 
 	stop chan struct{}  // closed by close to stop the handoff loop
 	wg   sync.WaitGroup // tracks the handoff goroutine so close can wait for it
@@ -88,7 +88,7 @@ func newNode(id string, cfg NodeConfig, net *Network, ring *Ring) *Node {
 		data:   map[string][]Version{},
 		hints:  map[string]map[string][]Version{},
 		issued: map[string]uint64{},
-		trees:  map[string]*merkle{},
+		trees:  map[int]*merkle{},
 		stop:   make(chan struct{}),
 	}
 	net.Register(id, nd.handle)
@@ -179,9 +179,9 @@ func (nd *Node) handle(from string, req any) any {
 	case syncReq:
 		return nd.handleSync(from, r)
 	case merkleReq:
-		return nd.handleMerkle(from, r)
+		return nd.handleMerkle(r)
 	case leafReq:
-		return nd.handleLeaf(from, r)
+		return nd.handleLeaf(r)
 	case pushReq:
 		nd.absorb(r.Items)
 		return putResp{}
