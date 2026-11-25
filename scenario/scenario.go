@@ -4,19 +4,21 @@
 // rule is checked against what the replicas converged to. It is used by
 // the tests and by the command-line tools to compare conflict policies.
 
-package store
+package scenario
 
 import (
 	"fmt"
 	"strings"
 	"time"
+
+	"dynamostore/store"
 )
 
 // ScenarioOptions configures RunPartitionScenario.
 type ScenarioOptions struct {
-	Policy Policy // conflict handling on every replica
-	R, W   int    // quorums used by the two writing clients
-	Sloppy bool   // whether the writing clients use sloppy quorums
+	Policy store.Policy // conflict handling on every replica
+	R, W   int          // quorums used by the two writing clients
+	Sloppy bool         // whether the writing clients use sloppy quorums
 	// SkewMinority shifts the minority side coordinator's clock; with LWW a
 	// positive skew lets the earlier write win.
 	SkewMinority time.Duration
@@ -32,7 +34,7 @@ type ScenarioResult struct {
 	WriteA       string          // value written by the client on side A
 	WriteB       string          // value written by the client on side B
 	ErrA, ErrB   error           // outcome of each side's write
-	Siblings     []Version       // returned by an R=N read after healing
+	Siblings     []store.Version // returned by an R=N read after healing
 	Final        string          // value after applying the resolution rule
 	Expected     string          // what the declared rule says the value must be
 	Converged    bool            // every replica holds exactly one, identical version
@@ -71,12 +73,12 @@ func (r *ScenarioResult) logf(format string, a ...any) {
 //     the initial write or a post-heal read fails, the result is returned
 //     early with RuleHolds false and the failure in Log.
 func RunPartitionScenario(o ScenarioOptions) ScenarioResult {
-	cfg := DefaultConfig()
+	cfg := store.DefaultConfig()
 	cfg.Node.Policy = o.Policy
 	if o.Seed != 0 {
 		cfg.Seed = o.Seed
 	}
-	c := NewCluster(cfg)
+	c := store.NewCluster(cfg)
 	defer c.Close()
 
 	const key = "cart:alice"
@@ -114,17 +116,17 @@ func RunPartitionScenario(o ScenarioOptions) ScenarioResult {
 		res.logf("minority side clocks skewed by %v", o.SkewMinority)
 	}
 
-	res.WriteA = UnionResolver([]string{ra.Values()[0], "eggs"})
+	res.WriteA = store.UnionResolver([]string{ra.Values()[0], "eggs"})
 	verA, errA := a.Put(key, res.WriteA, ra.Context)
 	res.ErrA = errA
 	time.Sleep(2 * time.Millisecond) // B writes strictly later in real time
-	res.WriteB = UnionResolver([]string{rb.Values()[0], "bread"})
+	res.WriteB = store.UnionResolver([]string{rb.Values()[0], "bread"})
 	verB, errB := b.Put(key, res.WriteB, rb.Context)
 	res.ErrB = errB
 	res.logf("side A put {%s}: %s", res.WriteA, errStr(res.ErrA))
 	res.logf("side B put {%s}: %s", res.WriteB, errStr(res.ErrB))
 
-	time.Sleep(3 * c.cfg.Node.ReplicaTimeout) // let in-flight replication finish
+	time.Sleep(3 * c.ReplicaTimeout()) // let in-flight replication finish
 	c.Net.Heal()
 	hinted := c.WaitHintsDrained(500 * time.Millisecond)
 	c.AntiEntropy()
@@ -144,10 +146,10 @@ func RunPartitionScenario(o ScenarioOptions) ScenarioResult {
 	// The declared rule.
 	var ackedVals []string
 	switch o.Policy {
-	case KeepSiblings:
+	case store.KeepSiblings:
 		// Rule: the reconciled value is the set union of every sibling
 		// returned, and it must contain every acknowledged write.
-		res.Expected = UnionResolver(got.Values())
+		res.Expected = store.UnionResolver(got.Values())
 		acked := []string{"milk"}
 		for _, w := range []struct {
 			val string
@@ -163,16 +165,16 @@ func RunPartitionScenario(o ScenarioOptions) ScenarioResult {
 				res.logf("note: put {%s} reported failure but reached a replica; quorum failure is not a rollback, so it resurfaces as a sibling", w.val)
 			}
 		}
-		res.AckedKept = isSubset(UnionResolver(acked), res.Expected)
-		final, n, err := reader.GetResolved(key, UnionResolver)
+		res.AckedKept = store.IsSubset(store.UnionResolver(acked), res.Expected)
+		final, n, err := reader.GetResolved(key, store.UnionResolver)
 		if err != nil {
 			res.logf("reconcile write failed: %v", err)
 			return res
 		}
 		res.logf("client reconciled %d siblings by set union -> {%s}", n, final)
-	case LastWriterWins:
+	case store.LastWriterWins:
 		// The acknowledged write with the highest (timestamp, origin) wins.
-		var acked []Version
+		var acked []store.Version
 		ackedVals = []string{"milk"}
 		if errA == nil {
 			acked = append(acked, verA)
@@ -188,7 +190,7 @@ func RunPartitionScenario(o ScenarioOptions) ScenarioResult {
 			// matches exactly what every replica should have kept.
 			win := acked[0]
 			for _, v := range acked[1:] {
-				if (rules{policy: LastWriterWins}).lwwBeats(v, win) {
+				if store.LWWBeats(v, win) {
 					win = v
 				}
 			}
@@ -203,7 +205,7 @@ func RunPartitionScenario(o ScenarioOptions) ScenarioResult {
 
 	// Give the reconciling write (or LWW replication) time to land, then
 	// run one more anti-entropy round before checking every replica.
-	time.Sleep(3 * c.cfg.Node.ReplicaTimeout)
+	time.Sleep(3 * c.ReplicaTimeout())
 	c.AntiEntropy()
 	final, _ := reader.Get(key)
 	if len(final.Versions) == 1 {
@@ -218,12 +220,12 @@ func RunPartitionScenario(o ScenarioOptions) ScenarioResult {
 		res.logf("  replica %s holds %s", id, describe(snap))
 	}
 	res.RuleHolds = res.Converged && res.Final == res.Expected
-	if o.Policy == KeepSiblings {
+	if o.Policy == store.KeepSiblings {
 		res.RuleHolds = res.RuleHolds && res.AckedKept
 	} else {
 		// Under LWW, AckedKept measures the cost of the policy: it is
 		// false whenever an acknowledged write was discarded.
-		res.AckedKept = isSubset(UnionResolver(ackedVals), res.Final)
+		res.AckedKept = store.IsSubset(store.UnionResolver(ackedVals), res.Final)
 	}
 	res.logf("final {%s}, expected by rule {%s}, converged=%v -> rule holds=%v",
 		res.Final, res.Expected, res.Converged, res.RuleHolds)
@@ -251,7 +253,7 @@ func errStr(err error) string {
 //
 // Returns:
 //   - string: the versions separated by spaces, e.g. "{milk}[n1:1]".
-func describe(vs []Version) string {
+func describe(vs []store.Version) string {
 	parts := make([]string, len(vs))
 	for i, v := range vs {
 		parts[i] = fmt.Sprintf("{%s}%v", v.Value, v.Clock())

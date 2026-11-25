@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"dynamostore/chart"
-	"dynamostore/store"
+	"dynamostore/ring"
 )
 
 // vnodeCounts are the vnodes-per-node values swept by A1b.
@@ -50,7 +50,7 @@ func ablateVnodes(vn int) vnodeResult {
 	r.tokens = 5 * vn
 	for p := 0; p < a1bPlacements; p++ {
 		ids5 := nodeNames(p, 5)
-		ring5, ring4 := store.NewRing(ids5, vn), store.NewRing(ids5[:4], vn)
+		ring5, ring4 := ring.NewRing(ids5, vn), ring.NewRing(ids5[:4], vn)
 		cnt := map[string]float64{}
 		moved := 0
 		for k := 0; k < a1bKeys; k++ {
@@ -83,20 +83,20 @@ func ablateVnodes(vn int) vnodeResult {
 		r.worstMoved = math.Max(r.worstMoved, m)
 	}
 	// Lookup and build cost on placement 0, repeated enough to time.
-	ring := store.NewRing(nodeNames(0, 5), vn)
+	rg := ring.NewRing(nodeNames(0, 5), vn)
 	const lookups = 50000
 	r.lookupNs = math.Inf(1)
 	for rep := 0; rep < 5; rep++ { // fastest of 5, to damp GC and scheduler noise
 		t0 := time.Now()
 		for k := 0; k < lookups; k++ {
-			ring.PreferenceList("user:"+strconv.Itoa(k), 3)
+			rg.PreferenceList("user:"+strconv.Itoa(k), 3)
 		}
 		r.lookupNs = math.Min(r.lookupNs, float64(time.Since(t0).Nanoseconds())/lookups)
 	}
 	t0 := time.Now()
 	const builds = 20
 	for i := 0; i < builds; i++ {
-		store.NewRing(nodeNames(0, 5), vn)
+		ring.NewRing(nodeNames(0, 5), vn)
 	}
 	r.buildUs = float64(time.Since(t0).Microseconds()) / builds
 	return r

@@ -62,7 +62,7 @@ Every request gets exactly one reply type. If no reply comes back, the message o
 
 ## 2. How a message travels
 
-All messages go through one function, `Network.Send(ctx, from, to, req)` in `store/network.go`. Messages are ordinary Go values handed over in memory. Nothing is converted to bytes, because there is no real network on `main`.
+All messages go through one function, `Network.Send(ctx, from, to, req)` in `network/network.go`. Messages are ordinary Go values handed over in memory. Nothing is converted to bytes, because there is no real network on `main`.
 
 <div align="center">
 

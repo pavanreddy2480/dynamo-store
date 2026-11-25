@@ -30,8 +30,8 @@ The depth was picked by sweep (A6): at 1% divergence KB sent falls from 496 (dep
 
 ## Code
 
-* `store/ring.go`: `NewFixedRing`, `WithNode`, `WithoutNode`, `Partition`, `PartitionList`; each partition's walk is precomputed, so a lookup no longer allocates.
-* `store/merkle.go`: one tree (about 170 lines with comments).
+* `ring/ring.go`: `NewFixedRing`, `WithNode`, `WithoutNode`, `Partition`, `PartitionList`; each partition's walk is precomputed, so a lookup no longer allocates.
+* `merkle/merkle.go`: one tree (about 170 lines with comments).
 * `store/antientropy.go`: per-partition tree updates in `put` and the tree-walk protocol.
 * Default config: `Partitions: 256`, `MerkleDepth: 4`. `Partitions: 0` falls back to random vnodes, where each gap between two tokens is a partition and the same code works.
 

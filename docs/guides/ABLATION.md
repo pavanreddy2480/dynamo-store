@@ -6,7 +6,7 @@ It describes the branch `adaptive-defaults` (and `ablations`, which includes it)
 
 > **How to read the numbers.** The whole system runs inside one Go program with a fake network (messages wait a random delay, and are dropped across a partition). So **compare numbers with each other, not with a real data centre.** Stale-read percentages in particular belong to our made-up delays; we always say which network and workload they came from.
 
-> **Tip:** if a word is new, see the [glossary](#13-glossary) at the end.
+> **Tip:** if a word is new, see the [glossary](#14-glossary) at the end.
 
 ---
 
@@ -21,10 +21,11 @@ It describes the branch `adaptive-defaults` (and `ablations`, which includes it)
 7. [Merkle trees in detail, with the messages they send](#7-merkle-trees-in-detail-with-the-messages-they-send)
 8. [Part E: when the network misbehaves](#8-part-e-when-the-network-misbehaves)
 9. [A bug the experiments found](#9-a-bug-the-experiments-found)
-10. [The final recipe and what changed from `main`](#10-the-final-recipe-and-what-changed-from-main)
-11. [Honest limits](#11-honest-limits)
-12. [Re-running everything](#12-re-running-everything)
-13. [Glossary](#13-glossary)
+10. [Three gaps that were still open, now tested](#10-three-gaps-that-were-still-open-now-tested)
+11. [The final recipe and what changed from `main`](#11-the-final-recipe-and-what-changed-from-main)
+12. [Honest limits](#12-honest-limits)
+13. [Re-running everything](#13-re-running-everything)
+14. [Glossary](#14-glossary)
 
 ---
 
@@ -52,7 +53,7 @@ We have three families of experiments, all runnable from the command line:
 |---|---|---|---|
 | **E1 to E3** | `go run ./cmd/bench` | `results/benchmark.md` | the headline: R and W, concurrent writes, partitions |
 | **A1 to A10** | `go run ./cmd/archbench` | `results/architecture.md` | one experiment per architecture decision (ring, clocks, repair, Merkle, timeout) |
-| **X1 to X8** | `go run ./cmd/bench -ablate` | `results/ablations.md` | the remaining gaps: noise, network speed, workload, repair timing, failures |
+| **X1 to X11** | `go run ./cmd/bench -ablate` | `results/ablations.md` | the remaining gaps: noise, network speed, workload, repair timing, failures |
 
 Three habits keep the results honest:
 
@@ -214,7 +215,7 @@ If your friends live next door, a message is quick and writes spread to all thre
 
 #### The real version
 
-`LatencyModel` in `store/network.go` draws each message delay as base + random jitter, plus a rare slow path. We ran E1 under three models (X2): fast LAN (0.1 ms hop), our default (0.4 ms hop), cross-region (5 ms hop).
+`LatencyModel` in `network/network.go` draws each message delay as base + random jitter, plus a rare slow path. We ran E1 under three models (X2): fast LAN (0.1 ms hop), our default (0.4 ms hop), cross-region (5 ms hop).
 
 #### What we measured
 
@@ -353,7 +354,7 @@ Picture a clock face. You hash a key to a spot on the clock and give it to the n
 
 #### The real version
 
-`store/ring.go`. A key's `PreferenceList(key, N)` is the next N distinct nodes clockwise. A **sloppy** write may spill past these onto further nodes.
+`ring/ring.go`. A key's `PreferenceList(key, N)` is the next N distinct nodes clockwise. A **sloppy** write may spill past these onto further nodes.
 
 ### C2. Which hash function?
 
@@ -387,7 +388,7 @@ fixed pieces:    | a | b | c | a | b | c | a |    equal and predictable
 
 #### The real version
 
-`NewRing` (random vnodes) and `NewFixedRing` (equal pieces, in `store/ring.go`). With fixed pieces the whole clock is cut into `Q` equal **partitions**; partition `i` starts as node `i mod 5`'s. Each partition has a precomputed list of its owner nodes. `Config.Partitions` selects it (default 256).
+`NewRing` (random vnodes) and `NewFixedRing` (equal pieces, in `ring/ring.go`). With fixed pieces the whole clock is cut into `Q` equal **partitions**; partition `i` starts as node `i mod 5`'s. Each partition has a precomputed list of its owner nodes. `Config.Partitions` selects it (default 256).
 
 #### What we tested (A1b, A8)
 
@@ -520,7 +521,7 @@ If every pair of friends builds its own private fingerprint tree, each new write
 
 #### The real version
 
-`store/merkle.go` holds the tree and `Node.trees` maps `partition -> tree`. When a key is written, `Node.put` (`store/antientropy.go`) updates the tree of the key's partition. Fixed partitions are what made this natural: the ring has exactly `Q` pieces and each key belongs to exactly one.
+`merkle/merkle.go` holds the tree and `Node.trees` maps `partition -> tree`. When a key is written, `Node.put` (`store/antientropy.go`) updates the tree of the key's partition. Fixed partitions are what made this natural: the ring has exactly `Q` pieces and each key belongs to exactly one.
 
 A test (`checkTreesMatchData`) rebuilds every tree from scratch from the stored data and checks that the incrementally updated trees never drift from it.
 
@@ -657,7 +658,7 @@ We keep it because it is cheap and helps read keys, but we **do not claim it mak
 
 ## 7. Merkle trees in detail, with the messages they send
 
-This section is the "how" behind D2 to D5. Everything here is in `store/merkle.go` and `store/antientropy.go`. The numbers in the worked example are small and made up so it fits on a page; the measured numbers are in D2.
+This section is the "how" behind D2 to D5. Everything here is in `merkle/merkle.go` and `store/antientropy.go`. The numbers in the worked example are small and made up so it fits on a page; the measured numbers are in D2.
 
 ### 7.1 One tree, built from the keys
 
@@ -844,7 +845,90 @@ This was in `main` too, so the fix also lives on its own small branch, `fix-hand
 
 ---
 
-## 10. The final recipe and what changed from `main`
+## 10. Three gaps that were still open, now tested
+
+The first round of ablations ended with three things marked "not tested". They are now tested (experiments X9 to X11 in `cmd/bench/x_more.go`, results in `results/ablations.md`).
+
+### X9. What happens to siblings and clocks during a long partition?
+
+#### The story
+
+While the phone lines are cut, two friends keep adding to the same list. If each friend first reads the list and writes back the combined list, the pile of "conflicting copies" stays tiny. If a friend just scribbles a new line without looking at what is already there, **every scribble counts as a separate conflicting copy**, and the pile keeps growing.
+
+#### The real version
+
+Siblings are kept until a write whose context covers them replaces them; there is no cap. The test splits the cluster `{n1,n2} | {n3,n4,n5}`, uses R=W=1 (so both sides keep accepting writes), 8 hot keys and 2, 8 or 32 writers, for 2 seconds. "Union" clients read, merge and write back. "Blind" clients write with an empty context. Afterwards we heal, run anti-entropy, and have one client read each key and write back the merge.
+
+#### What we measured
+
+| writers | clients | max siblings per key (end of partition) | max clock entries | largest sibling set | after heal + anti-entropy |
+|---|---|---|---|---|---|
+| 2 | union | 1 | 3 | 0.0 KB | 2 |
+| 8 | union | 2.7 | 3 | 0.1 KB | 3.7 |
+| 32 | union | 4.0 | 3 | 0.3 KB | 6.0 |
+| 2 | blind | **218** | 1 | 6.4 KB | **346** |
+| 32 | blind | **347** | 1 | 10.2 KB | **513** |
+
+* **Clock size stayed tiny.** A clock has at most one entry per node, so it was 3 entries at most no matter how many clients there were (5 nodes is the hard limit). Clock growth is not a problem with dotted version vectors.
+* **Well-behaved clients keep siblings small:** at most 4 per key during the partition and at most 8 after the heal, and one read-merge-write collapsed every key back to **1** in every run.
+* **Blind writers are the danger.** Each blind write is a sibling, so a key reached hundreds of siblings in 2 seconds, and anti-entropy then merged the two sides' piles into a bigger one (about 350 to 520).
+* **A big pile can no longer be read.** Reading a 300-plus-sibling key from all 3 replicas (R=3) timed out at the 17 ms replica timeout for 4 to 6 of the 8 keys, because moving and merging that many versions is slow. Reading from 1 replica worked, and writing back the merged result collapsed the pile to 1 sibling in every run with 2 blind writers, but in only one of the three runs with 8 and with 32 blind writers; in the other runs some keys' reads timed out even at R=1 or the pile came back, so it stayed large.
+
+#### What it means
+
+Dotted version vectors keep clocks small, and siblings stay small as long as clients read before they write. The unprotected case is blind writing during a partition, which can pile up hundreds of siblings and make the key hard to read. A production version would cap the sibling count or merge the oldest siblings automatically (Dynamo itself truncates clocks). That is the main finding to put in the limits section of the report.
+
+### X10. Do clients with different R and W get along?
+
+#### The story
+
+Alice always asks one friend, Bob always asks all three. The rule says each person's freshness depends only on **their own** question group and the group that wrote the entry, not on what others do. Is that true when they all work at the same time?
+
+#### The real version
+
+One cluster, 30 keys. Key `k` is always written with `W = 1 + k mod 3`. Nine readers use R=1, R=2 or R=3 (three each). We count stale reads for every (W, R) pair.
+
+#### What we measured
+
+| key written with | reader R=1 | R=2 | R=3 |
+|---|---|---|---|
+| W=1 | 13.0% | 0.6% | **0.0%** |
+| W=2 | 0.3% | **0.0%** | **0.0%** |
+| W=3 | **0.0%** | **0.0%** | **0.0%** |
+
+Bold cells are the pairs with R + W > 3. Every one of them was zero in every run.
+
+#### What it means
+
+Mixing clients works as the theory says: a pair is never stale when R + W > N, and the pairs that can be stale (R + W <= 3) are the only ones that were, whatever the other clients did. Per-client R and W is a real feature, not just a claim.
+
+### X11. What happens when a node joins a live cluster?
+
+#### The story
+
+A new friend joins. They own several lists now, but their notebook is empty. Someone has to copy the lists over, and meanwhile the group must not give wrong answers or lose entries.
+
+#### The real version
+
+New code: `Cluster.AddNode()` adds a fifth node to a running 4-node cluster. The ring hands the newcomer its share of partitions (`Ring.WithNode`), every node and client switches to the new ring, and anti-entropy fills the empty node. We ran it with 400 static keys written at W=3, then 32 hot keys with writers and 8 readers (R=W=2, strict), and the join after 1 second.
+
+#### What we measured
+
+| anti-entropy interval | stale reads during the join | put failures during the join | time until the new node is full | acknowledged copies lost |
+|---|---|---|---|---|
+| 20 ms | 0% | 0% | 64 ms | 0 |
+| 100 ms (default) | 0% | 0% | 220 ms (33 to 392) | 0 |
+| 500 ms | 0% | 0% | 1.8 s | 0 |
+
+The new node ended up with 65.8% of the keys (a bit above the 60% average because of how the partitions are dealt).
+
+#### What it means
+
+A join is safe in this setup: reads stayed fresh, writes did not fail and nothing was lost, because R + W > N and the new node's replicas overlap with the old replicas that still hold the data. The filling time is roughly twice the anti-entropy interval, so a shorter interval means a faster join. One caution: in theory a write that was acknowledged by only two old replicas can briefly be missed by a read that lands on the new empty node plus the old replica that missed it. We did not see it in 3 runs per setting, but it is a real window; a production system would keep the new node out of read quorums until it is filled.
+
+---
+
+## 11. The final recipe and what changed from `main`
 
 | Choice | Value | Evidence |
 |---|---|---|
@@ -864,37 +948,38 @@ This was in `main` too, so the fix also lives on its own small branch, `fix-hand
 
 What differs from `main` (non-comment lines of `store/`: 1,151 on `main`, about 1,616 on this branch):
 
-1. Merkle anti-entropy replaces sending everything (largest addition: `store/merkle.go`, `store/antientropy.go`).
+1. Merkle anti-entropy replaces sending everything (largest addition: `merkle/merkle.go`, `store/antientropy.go`).
 2. 256 fixed partitions replace 64 random vnodes, with a tree per partition.
 3. Anti-entropy runs in the background every 100 ms; on `main` nothing started it.
 4. The replica timeout is derived from the network model instead of fixed at 20 ms.
 5. The hinted-handoff fix (now also on `main`).
 6. Optional switches, all off by default: `ReadFromROnly`, `MerkleOneShot`, false suspicion, the message counter.
-7. Tests, benchmarks (A1b, A6 to A10, X1 to X8), the chart package, and docs.
+7. Tests, benchmarks (A1b, A6 to A10, X1 to X11), the chart package, and docs.
 
 ---
 
-## 11. Honest limits
+## 12. Honest limits
 
 * One in-process simulation with a made-up network. A real network is on the separate `real-network-and-wal` branch.
 * Stale-read percentages belong to our delays and workload; quote them as ranges.
-* **Not yet tested:** sibling and clock growth when many writers work through a long partition (there is no cap on siblings), mixed R and W per client in one run, a node joining a running cluster (the ring was tested on its own, not live), and hash-collision risk of the 64-bit XOR leaf hashes (about 2^-64; argued, not measured).
+* **Sibling growth is uncapped.** Clients that write without reading can pile up hundreds of siblings during a partition (X9); a cap or automatic merge is not built.
+* **Not yet tested:** a real network, nodes leaving a live cluster (joining is tested, X11), and hash-collision risk of the 64-bit XOR leaf hashes (about 2^-64; argued, not measured). The window in which a read can miss a write because it lands on a freshly joined, still-empty node was not seen in our runs but is not closed in the code.
 
 ---
 
-## 12. Re-running everything
+## 13. Re-running everything
 
 ```bash
 go test -race ./...           # correctness tests
 go run ./cmd/bench            # E1-E3  -> results/benchmark.md
-go run ./cmd/bench -ablate    # X1-X8  -> results/ablations.md (use -only X3 for one)
+go run ./cmd/bench -ablate    # X1-X11  -> results/ablations.md (use -only X3 for one)
 go run ./cmd/archbench        # A1-A10 -> results/architecture.md (use -only A6 for one)
 go run ./cmd/plots            # redraw the charts for E1-E3 and A1-A5
 ```
 
 ---
 
-## 13. Glossary
+## 14. Glossary
 
 | Word | Plain meaning |
 |---|---|

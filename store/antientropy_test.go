@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"dynamostore/merkle"
+	"dynamostore/network"
 	"dynamostore/vclock"
 )
 
@@ -107,19 +109,19 @@ func checkTreesMatchData(t *testing.T, c *Cluster) {
 	t.Helper()
 	for _, nd := range c.Nodes {
 		nd.mu.Lock()
-		fresh := map[int]*merkle{}
+		fresh := map[int]*merkle.Tree{}
 		for k, vs := range nd.data {
-			p, h := nd.ring.Partition(k)
-			if !contains(nd.ring.PartitionList(p, nd.cfg.N), nd.ID) {
+			p, h := nd.ring.Load().Partition(k)
+			if !contains(nd.ring.Load().PartitionList(p, nd.cfg.N), nd.ID) {
 				continue
 			}
 			if fresh[p] == nil {
-				fresh[p] = newMerkle(nd.cfg.MerkleDepth)
+				fresh[p] = merkle.New(nd.cfg.MerkleDepth)
 			}
-			fresh[p].set(k, h, hashVersions(k, vs))
+			fresh[p].Set(k, h, hashVersions(k, vs))
 		}
 		for p, tr := range nd.trees {
-			if tr.h[1] != fresh[p].hash(1) {
+			if tr.Hash(1) != fresh[p].Hash(1) {
 				t.Errorf("%s: tree of partition %d drifted from its data", nd.ID, p)
 			}
 		}
@@ -134,7 +136,7 @@ func fastConfig(mode SyncMode) Config {
 	cfg.Node.AntiEntropy = mode
 	cfg.Node.HandoffInterval = 0
 	cfg.Node.AntiEntropyInterval = 0
-	cfg.Latency = LatencyModel{Base: 50 * time.Microsecond}
+	cfg.Latency = network.LatencyModel{Base: 50 * time.Microsecond}
 	cfg.Client = cfg.Latency
 	// Anti-entropy is the only traffic, but -race can stall a goroutine for
 	// tens of milliseconds; a timed-out exchange would look like a bug.

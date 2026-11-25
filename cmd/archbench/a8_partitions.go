@@ -12,19 +12,19 @@ import (
 	"math"
 
 	"dynamostore/chart"
-	"dynamostore/store"
+	"dynamostore/ring"
 )
 
 // placement builds the rings of one scheme: the 4-node ring, the 5-node ring
 // reached by a join, and the 4-node ring reached by that node leaving.
 type placement struct {
 	name              string
-	four, five, leave *store.Ring
+	four, five, leave *ring.Ring
 }
 
 // copiesMoved returns the percentage of replica copies (key, node) that the
 // new ring needs and the old ring did not have, over keys keys.
-func copiesMoved(old, new *store.Ring, keys int) float64 {
+func copiesMoved(old, new *ring.Ring, keys int) float64 {
 	moved := 0
 	for k := 0; k < keys; k++ {
 		key := fmt.Sprintf("user:%d", k)
@@ -43,7 +43,7 @@ func copiesMoved(old, new *store.Ring, keys int) float64 {
 
 // primariesMoved returns the percentage of keys whose first replica differs
 // between the two rings.
-func primariesMoved(old, new *store.Ring, keys int) float64 {
+func primariesMoved(old, new *ring.Ring, keys int) float64 {
 	moved := 0
 	for k := 0; k < keys; k++ {
 		key := fmt.Sprintf("user:%d", k)
@@ -56,7 +56,7 @@ func primariesMoved(old, new *store.Ring, keys int) float64 {
 
 // balance returns the min and max node share of replica copies (ideal 60%
 // with 5 nodes and N=3) and the coefficient of variation.
-func balance(r *store.Ring, ids []string, keys int) (mn, mx, cv float64) {
+func balance(r *ring.Ring, ids []string, keys int) (mn, mx, cv float64) {
 	cnt := map[string]float64{}
 	for k := 0; k < keys; k++ {
 		for _, p := range r.PreferenceList(fmt.Sprintf("user:%d", k), 3) {
@@ -78,12 +78,12 @@ func balance(r *store.Ring, ids []string, keys int) (mn, mx, cv float64) {
 func partitionExperiment() {
 	const keys = 100000
 	ids4, ids5 := nodes(4), nodes(5)
-	fixed5 := store.NewFixedRing(ids4, 256).WithNode("n5")
+	fixed5 := ring.NewFixedRing(ids4, 256).WithNode("n5")
 	schemes := []placement{
-		{"equal spacing, 1 piece per node", store.NewFixedRing(ids4, 4), store.NewFixedRing(ids5, 5), store.NewFixedRing(ids4, 4)},
-		{"random vnodes, 8 per node", store.NewRing(ids4, 8), store.NewRing(ids5, 8), store.NewRing(ids4, 8)},
-		{"random vnodes, 64 per node (previous default)", store.NewRing(ids4, 64), store.NewRing(ids5, 64), store.NewRing(ids4, 64)},
-		{"fixed partitions, Q=256", store.NewFixedRing(ids4, 256), fixed5, fixed5.WithoutNode("n5")},
+		{"equal spacing, 1 piece per node", ring.NewFixedRing(ids4, 4), ring.NewFixedRing(ids5, 5), ring.NewFixedRing(ids4, 4)},
+		{"random vnodes, 8 per node", ring.NewRing(ids4, 8), ring.NewRing(ids5, 8), ring.NewRing(ids4, 8)},
+		{"random vnodes, 64 per node (previous default)", ring.NewRing(ids4, 64), ring.NewRing(ids5, 64), ring.NewRing(ids4, 64)},
+		{"fixed partitions, Q=256", ring.NewFixedRing(ids4, 256), fixed5, fixed5.WithoutNode("n5")},
 	}
 	w("\n## A8. Ring placement: equal spacing vs random vnodes vs fixed partitions\n\n")
 	w("%d keys, N=3. With 5 nodes each node should hold 60%% of the replica copies. Moving a node in or out should ideally move 20%% of all copies (the joining node holds 3/5 of one copy-set; the leaving one held the same). Moved = copies a node must receive because it was not in the key's old preference list.\n\n", keys)

@@ -12,13 +12,13 @@ import (
 	"strconv"
 
 	"dynamostore/chart"
-	"dynamostore/store"
+	"dynamostore/ring"
 )
 
 // moduloReplicas returns the 3 replicas modulo placement gives key on n
 // nodes: node hash%n and the next two in id order.
 func moduloReplicas(key string, n int) []int {
-	h := int(store.Hash64(key) % uint64(n))
+	h := int(ring.Hash64(key) % uint64(n))
 	return []int{h, (h + 1) % n, (h + 2) % n}
 }
 
@@ -59,7 +59,7 @@ func ringQ() {
 	var spreads, moved, ideal, modMoved []float64
 	ms, mm := moduloStats(keys)
 	for _, q := range qs {
-		four := store.NewFixedRing(ids4, q)
+		four := ring.NewFixedRing(ids4, q)
 		five := four.WithNode("n5")
 		mn, mx, _ := balance(five, ids5, keys)
 		j := copiesMoved(four, five, keys)

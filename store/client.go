@@ -10,8 +10,11 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"sync/atomic"
 	"time"
 
+	"dynamostore/network"
+	"dynamostore/ring"
 	"dynamostore/vclock"
 )
 
@@ -30,9 +33,9 @@ type Client struct {
 	// replica instead of a random one (compared in cmd/archbench).
 	FirstCoordinator bool
 
-	net  *Network // network the client sends on
-	ring *Ring    // ring used to find a key's replicas
-	n    int      // replicas per key
+	net  *network.Network           // network the client sends on
+	ring *atomic.Pointer[ring.Ring] // the cluster's live ring (replaced when a node joins)
+	n    int                        // replicas per key
 }
 
 // GetResult holds every concurrent version found plus the context (merged
@@ -68,7 +71,7 @@ func (g GetResult) Values() []string {
 //     reachable from this client.
 func (cl *Client) coordinator(key string) (string, error) {
 	if cl.FirstCoordinator {
-		for _, id := range cl.ring.PreferenceList(key, cl.n) {
+		for _, id := range cl.ring.Load().PreferenceList(key, cl.n) {
 			if cl.net.Reachable(cl.ID, id) {
 				return id, nil
 			}
@@ -77,7 +80,7 @@ func (cl *Client) coordinator(key string) (string, error) {
 		// fallback below still applies.
 	}
 	var live []string
-	for _, id := range cl.ring.PreferenceList(key, cl.n) {
+	for _, id := range cl.ring.Load().PreferenceList(key, cl.n) {
 		if cl.net.Reachable(cl.ID, id) {
 			live = append(live, id)
 		}
@@ -88,7 +91,7 @@ func (cl *Client) coordinator(key string) (string, error) {
 	if cl.Sloppy {
 		// Walk starts with the (unreachable) preferred replicas, so the
 		// first reachable entry is the nearest fallback on the ring.
-		for _, id := range cl.ring.Walk(key) {
+		for _, id := range cl.ring.Load().Walk(key) {
 			if cl.net.Reachable(cl.ID, id) {
 				return id, nil
 			}
@@ -110,7 +113,7 @@ func (cl *Client) coordinator(key string) (string, error) {
 //     pass to the next Put. When the error wraps ErrUnavailable it still
 //     holds whatever the replies that did arrive contained.
 //   - error: nil on success; wraps ErrUnavailable if no coordinator was
-//     reachable or fewer than R replicas answered, or is ErrTimeout if the
+//     reachable or fewer than R replicas answered, or is network.ErrTimeout if the
 //     coordinator did not answer in time.
 func (cl *Client) Get(key string) (GetResult, error) {
 	coord, err := cl.coordinator(key)
@@ -149,7 +152,7 @@ func (cl *Client) Get(key string) (GetResult, error) {
 //   - Version: the version the coordinator created (zero if the request
 //     never reached a coordinator or its reply was lost).
 //   - error: nil on success; wraps ErrUnavailable if no coordinator was
-//     reachable or fewer than W replicas acknowledged, or is ErrTimeout if
+//     reachable or fewer than W replicas acknowledged, or is network.ErrTimeout if
 //     the coordinator did not answer in time.
 func (cl *Client) Put(key, value string, ctx vclock.VC) (Version, error) {
 	if ctx == nil {

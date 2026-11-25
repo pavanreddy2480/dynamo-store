@@ -1,7 +1,7 @@
 // Command demo runs the partition / concurrent-update / reconnect scenario
 // under several quorum and resolution settings and prints what happened.
 //
-// Each case calls store.RunPartitionScenario, which writes a key, partitions
+// Each case calls scenario.RunPartitionScenario, which writes a key, partitions
 // the cluster so the key's replicas are split 1 | 2, updates the key on both
 // sides, heals, and checks the declared resolution rule. The cases cover:
 //
@@ -27,6 +27,7 @@ import (
 	"os"
 	"time"
 
+	"dynamostore/scenario"
 	"dynamostore/store"
 )
 
@@ -36,13 +37,13 @@ func main() {
 	// cases pairs a human-readable label with the scenario options it runs.
 	cases := []struct {
 		name string
-		o    store.ScenarioOptions
+		o    scenario.ScenarioOptions
 	}{
-		{"siblings, R=1 W=1, strict quorum", store.ScenarioOptions{Policy: store.KeepSiblings, R: 1, W: 1}},
-		{"siblings, R=2 W=2, strict quorum", store.ScenarioOptions{Policy: store.KeepSiblings, R: 2, W: 2}},
-		{"siblings, R=2 W=2, sloppy quorum + hinted handoff", store.ScenarioOptions{Policy: store.KeepSiblings, R: 2, W: 2, Sloppy: true}},
-		{"last-writer-wins, R=1 W=1", store.ScenarioOptions{Policy: store.LastWriterWins, R: 1, W: 1}},
-		{"last-writer-wins, R=1 W=1, minority clock +50ms", store.ScenarioOptions{Policy: store.LastWriterWins, R: 1, W: 1, SkewMinority: 50 * time.Millisecond}},
+		{"siblings, R=1 W=1, strict quorum", scenario.ScenarioOptions{Policy: store.KeepSiblings, R: 1, W: 1}},
+		{"siblings, R=2 W=2, strict quorum", scenario.ScenarioOptions{Policy: store.KeepSiblings, R: 2, W: 2}},
+		{"siblings, R=2 W=2, sloppy quorum + hinted handoff", scenario.ScenarioOptions{Policy: store.KeepSiblings, R: 2, W: 2, Sloppy: true}},
+		{"last-writer-wins, R=1 W=1", scenario.ScenarioOptions{Policy: store.LastWriterWins, R: 1, W: 1}},
+		{"last-writer-wins, R=1 W=1, minority clock +50ms", scenario.ScenarioOptions{Policy: store.LastWriterWins, R: 1, W: 1, SkewMinority: 50 * time.Millisecond}},
 	}
 	// allOK stays true only if every case converged to the value its
 	// declared rule predicts. Losing acknowledged items counts as a violation
@@ -50,7 +51,7 @@ func main() {
 	// those cases AckedKept is printed for information only.
 	allOK := true
 	for i, tc := range cases {
-		r := store.RunPartitionScenario(tc.o)
+		r := scenario.RunPartitionScenario(tc.o)
 		fmt.Printf("=== %d. %s (key %s, replicas %v)\n", i+1, tc.name, r.Key, r.PrefList)
 		for _, l := range r.Log {
 			fmt.Println("  " + l)

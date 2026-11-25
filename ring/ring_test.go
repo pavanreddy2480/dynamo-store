@@ -1,4 +1,4 @@
-package store
+package ring
 
 import (
 	"fmt"
@@ -35,22 +35,6 @@ func TestFixedRingJoinAndLeave(t *testing.T) {
 		if five.owner[tok] != "n5" && five.owner[tok] != back.owner[tok] {
 			t.Fatal("a partition not owned by the leaver changed owner")
 		}
-	}
-}
-
-// Merkle anti-entropy converges on the older random-vnode ring exactly as
-// it does on the default fixed-partition ring (each token gap is a
-// partition with its own tree).
-func TestMerkleOnRandomVnodes(t *testing.T) {
-	for seed := int64(1); seed <= 5; seed++ {
-		cfg := fastConfig(MerkleSync)
-		cfg.Partitions = 0
-		c := NewCluster(cfg)
-		want := seedDivergent(t, seed, 300, c)
-		syncRound(t, c)
-		checkConverged(t, c, want, fmt.Sprintf("random vnodes seed %d", seed))
-		checkTreesMatchData(t, c)
-		c.Close()
 	}
 }
 

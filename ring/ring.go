@@ -2,7 +2,7 @@
 // that maps every key to its preference list (the N nodes that store it)
 // and to the ordered list of fallback nodes used by sloppy quorums.
 
-package store
+package ring
 
 import (
 	"crypto/md5"
@@ -249,3 +249,10 @@ func (r *Ring) WithoutNode(id string) *Ring {
 	}
 	return n.index()
 }
+
+// Nodes returns the physical nodes on the ring, in the order they were
+// added. The slice must not be modified.
+func (r *Ring) Nodes() []string { return r.nodes }
+
+// Partitions returns the number of partitions (tokens) on the ring.
+func (r *Ring) Partitions() int { return len(r.tokens) }

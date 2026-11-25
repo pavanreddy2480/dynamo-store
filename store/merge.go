@@ -180,3 +180,8 @@ func cloneVersions(vs []Version) []Version {
 	}
 	return out
 }
+
+// LWWBeats reports whether version a wins over b under last-writer-wins
+// (causal order first, then timestamp, then coordinator id). It is exported
+// for the scenario package's checks.
+func LWWBeats(a, b Version) bool { return (rules{policy: LastWriterWins}).lwwBeats(a, b) }

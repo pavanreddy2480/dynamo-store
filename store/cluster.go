@@ -6,7 +6,10 @@
 package store
 
 import (
+	"dynamostore/network"
+	"dynamostore/ring"
 	"fmt"
+	"sync/atomic"
 	"time"
 )
 
@@ -19,10 +22,10 @@ type Config struct {
 	// Partitions, when positive, replaces the random virtual nodes with
 	// that many fixed equal partitions (NewFixedRing).
 	Partitions int
-	Node       NodeConfig   // settings shared by every replica
-	Latency    LatencyModel // replica-to-replica message delay
-	Client     LatencyModel // delay of hops that start or end at a client
-	Seed       int64        // seeds the network's latency sampling
+	Node       NodeConfig           // settings shared by every replica
+	Latency    network.LatencyModel // replica-to-replica message delay
+	Client     network.LatencyModel // delay of hops that start or end at a client
+	Seed       int64                // seeds the network's latency sampling
 	// FalseSuspicion is the probability the failure detector wrongly
 	// reports a reachable node as down (see Network.SetFalseSuspicion).
 	FalseSuspicion float64
@@ -51,8 +54,8 @@ func DefaultConfig() Config {
 			AntiEntropyInterval: 100 * time.Millisecond,
 			MerkleDepth:         4,
 		},
-		Latency: DefaultLatency,
-		Client:  DefaultClientLatency,
+		Latency: network.DefaultLatency,
+		Client:  network.DefaultClientLatency,
 		Seed:    1,
 	}
 }
@@ -62,11 +65,12 @@ func DefaultConfig() Config {
 // Create one with NewCluster, talk to it through clients from NewClient,
 // and call Close when done to stop the nodes' background loops.
 type Cluster struct {
-	Net   *Network         // message bus between nodes and clients
-	Ring  *Ring            // consistent-hash ring placing keys on nodes
-	Nodes map[string]*Node // by node id
-	IDs   []string         // node ids in a fixed order
-	cfg   Config           // configuration the cluster was built from
+	Net   *network.Network          // message bus between nodes and clients
+	Ring  *ring.Ring                // ring at creation or after the last AddNode; use PreferenceList for the live ring
+	Nodes map[string]*Node          // by node id
+	IDs   []string                  // node ids in a fixed order
+	cfg   Config                    // configuration the cluster was built from
+	ringP atomic.Pointer[ring.Ring] // the live ring, shared with clients and swapped by AddNode
 }
 
 // NewCluster builds and starts a cluster.
@@ -88,17 +92,18 @@ func NewCluster(cfg Config) *Cluster {
 	for i := range ids {
 		ids[i] = fmt.Sprintf("n%d", i+1)
 	}
-	ring := NewRing(ids, cfg.VNodes)
+	rg := ring.NewRing(ids, cfg.VNodes)
 	if cfg.Partitions > 0 {
-		ring = NewFixedRing(ids, cfg.Partitions)
+		rg = ring.NewFixedRing(ids, cfg.Partitions)
 	}
 	c := &Cluster{
-		Net:   NewNetwork(cfg.Latency, cfg.Client, cfg.Seed),
-		Ring:  ring,
+		Net:   network.NewNetwork(cfg.Latency, cfg.Client, cfg.Seed),
+		Ring:  rg,
 		Nodes: map[string]*Node{},
 		IDs:   ids,
 		cfg:   cfg,
 	}
+	c.ringP.Store(rg)
 	c.Net.SetFalseSuspicion(cfg.FalseSuspicion)
 	for _, id := range ids {
 		c.Nodes[id] = newNode(id, cfg.Node, c.Net, c.Ring)
@@ -107,6 +112,38 @@ func NewCluster(cfg Config) *Cluster {
 		nd.start()
 	}
 	return c
+}
+
+// AddNode adds one node to the running cluster and returns its id.
+//
+// The new node is named after the current node count (n6 for a cluster of
+// five) and takes about 1/(n+1) of the ring's partitions from the existing
+// nodes (Ring.WithNode). It starts empty: its data arrives through
+// anti-entropy, so until that has run, a read quorum that includes the new
+// node can miss writes (experiment X11 measures this window).
+//
+// Only fixed-partition rings (Config.Partitions > 0) support joining. Client
+// requests may run concurrently, but AddNode must not run concurrently with
+// other Cluster methods.
+//
+// Returns:
+//   - string: the id of the new node.
+func (c *Cluster) AddNode() string {
+	if c.cfg.Partitions == 0 {
+		panic("store: AddNode needs a fixed-partition ring")
+	}
+	id := fmt.Sprintf("n%d", len(c.IDs)+1)
+	rg := c.ringP.Load().WithNode(id)
+	nd := newNode(id, c.cfg.Node, c.Net, rg)
+	c.Nodes[id] = nd
+	c.IDs = append(c.IDs, id)
+	c.Ring = rg
+	c.ringP.Store(rg)
+	for _, n := range c.Nodes {
+		n.ring.Store(rg)
+	}
+	nd.start()
+	return id
 }
 
 // SetSkew changes one node's wall-clock skew (used by LWW experiments).
@@ -134,6 +171,10 @@ func (c *Cluster) Close() {
 	}
 }
 
+// ReplicaTimeout returns the replica timeout in effect, after a zero value
+// in the configuration was replaced by AutoTimeout.
+func (c *Cluster) ReplicaTimeout() time.Duration { return c.cfg.Node.ReplicaTimeout }
+
 // PreferenceList returns the replicas for key.
 //
 // Parameters:
@@ -142,7 +183,7 @@ func (c *Cluster) Close() {
 // Returns:
 //   - []string: the ids of the N nodes responsible for key, in ring order.
 func (c *Cluster) PreferenceList(key string) []string {
-	return c.Ring.PreferenceList(key, c.cfg.Node.N)
+	return c.ringP.Load().PreferenceList(key, c.cfg.Node.N)
 }
 
 // AntiEntropy runs one round of pairwise synchronisation between every pair
@@ -220,7 +261,7 @@ func (c *Cluster) NewClient(id string, r, w int) *Client {
 	return &Client{
 		ID: id, R: r, W: w,
 		Timeout: 3 * c.cfg.Node.ReplicaTimeout,
-		net:     c.Net, ring: c.Ring, n: c.cfg.Node.N,
+		net:     c.Net, ring: &c.ringP, n: c.cfg.Node.N,
 	}
 }
 
@@ -228,7 +269,7 @@ func (c *Cluster) NewClient(id string, r, w int) *Client {
 // (two hops) of Base + 4 mean jitters + the slow-path extra, so a healthy
 // request almost never times out whatever the network's speed. Experiment
 // X2 showed a fixed 20 ms fails 23% of puts at 5 ms hops. Never below 1 ms.
-func AutoTimeout(l LatencyModel) time.Duration {
+func AutoTimeout(l network.LatencyModel) time.Duration {
 	to := 2 * (l.Base + 4*l.JitterMean + l.SlowExtra)
 	return max(to, time.Millisecond)
 }
