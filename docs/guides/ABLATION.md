@@ -369,7 +369,9 @@ Picture a clock face. You hash a key to a spot on the clock and give it to the n
 
 #### What it means
 
-MD5 spreads keys far more evenly (FNV mixes short, similar strings poorly). We use MD5.
+MD5 spreads keys far more evenly (FNV mixes short, similar strings poorly). We use MD5 to place keys on the ring.
+
+**Where else a hash appears.** Placing keys is only one of three hash jobs. Inside the Merkle trees, a key's fingerprint uses FNV-1a (fast, and it only has to notice change, not spread keys over a circle), and parent nodes combine their children with a small bit-scrambling function (`splitmix`, in `merkle/merkle.go`). None of these has to resist an attacker; a chance collision (about 1 in 2^64) would only delay a repair until the next write. MD5 or SHA-256 would work in the tree too, just slower. Go's standard library has no Murmur3; `hash/maphash` is fast but seeded randomly per process, so it cannot work between real machines.
 
 ### C3. Random slices (virtual nodes) or equal fixed pieces?
 
@@ -681,10 +683,10 @@ A tree of fingerprints. At the bottom, each **leaf** is the fingerprint of a bun
 
 #### The real version
 
-* `newMerkle(depth)` allocates `2^(depth+1)` hashes, stored as a heap: node 1 is the top, node `i` has children `2i` and `2i+1`, and leaves are `2^depth .. 2^(depth+1)-1`. Each tree node is named `nodeRef{P, I}` (partition, index).
+* `merkle.New(depth)` allocates `2^(depth+1)` hashes, stored as a heap: node 1 is the top, node `i` has children `2i` and `2i+1`, and leaves are `2^depth .. 2^(depth+1)-1`. Each tree node is named `nodeRef{P, I}` (partition, index).
 * A key's leaf is chosen by `leafOf`: a well-mixed version of the key's ring hash, so keys spread evenly over the leaves.
 * A key's hash is `hashVersions(key, versions)`, a hash of the key and its whole sibling set. The leaf hash is the **XOR** of its keys' hashes. XOR makes an update cheap and order-free: to change one key, XOR out the old hash and XOR in the new one.
-* After a leaf changes, `rehash` walks up to the top recomputing each parent with `mix(left, right)`. That is `depth` small steps per write.
+* The hashes: `hashVersions` uses FNV-1a, `mix` uses `splitmix`, the ring uses MD5 (see C2). After a leaf changes, `rehash` walks up to the top recomputing each parent with `mix(left, right)`. That is `depth` small steps per write.
 
 ### 7.2 The new messages (`store/messages.go`, `store/antientropy.go`)
 

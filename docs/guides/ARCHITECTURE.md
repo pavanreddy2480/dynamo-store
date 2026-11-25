@@ -886,7 +886,7 @@ pile before        incoming           decision                 pile after
 
 **LWW tie-break.** `lwwBeats` checks, in order: same write (no), causally older (no), causally newer (yes), higher timestamp, and finally higher node id. The last step only has to be the same on every replica, so they all pick the same winner.
 
-### 14.4 The ring (`ring/ring.go`, 251 lines)
+### 14.4 The ring (`ring/ring.go`, 258 lines)
 
 **Data.**
 
@@ -905,7 +905,7 @@ type Ring struct {
 **Finding a key's partition.** Binary-search for the first token at or after the key's hash (wrapping with `%`):
 
 ```go
-h := r.hash(key)
+h := hash64(key)
 p := sort.Search(len(r.tokens), func(i int) bool { return r.tokens[i] >= h }) % len(r.tokens)
 return p, h          // Partition(key)
 ```
@@ -972,7 +972,7 @@ case <-ctx.Done(): return nil, ErrTimeout
 
 **Safety.** A read-write lock guards the maps (many readers, few writers), and the random generator has its own lock because Go's `rand.Rand` is not safe to share.
 
-### 14.6 The node (`store/node.go`, 279 lines)
+### 14.6 The node (`store/node.go`, 283 lines)
 
 **Data.**
 
@@ -1076,7 +1076,7 @@ go func() {
 
 The answer to the client is cloned before this goroutine starts, because the goroutine keeps changing `merged`.
 
-### 14.8 Repair (`store/repair.go` 74 lines, `store/antientropy.go` 387 lines, `merkle/merkle.go` 190 lines)
+### 14.8 Repair (`store/repair.go` 74 lines, `store/antientropy.go` 419 lines, `merkle/merkle.go` 157 lines)
 
 **Hinted handoff (`handoffHints`).**
 
@@ -1099,21 +1099,31 @@ Resending a note that was already delivered is harmless, because merging the sam
 **The tree (`merkle/merkle.go`).**
 
 ```go
-type merkle struct {
+type Tree struct {           // package merkle
     depth int                 // levels below the root; leaves = 1<<depth
-    h     []uint64            // heap of node hashes, length 2*leaves
+    h     []uint64            // node hashes in one flat array, length 2*leaves
     keys  []map[string]uint64 // per leaf: key -> key hash
 }
 ```
 
-Node 1 is the top; node `i` has children `2i` and `2i+1`; leaves are `leaves .. 2*leaves-1`. `set(key, ringHash, valueHash)` picks the leaf with `leafOf` (a mixed version of the ring hash), XORs the old key hash out of the leaf hash and the new one in, then `rehash` walks up recomputing each parent as `mix(left, right)`. `Node.put` is the only way data is written, and it calls `set` on the tree of the key's partition, so the trees always match the data (a test rebuilds trees from scratch and compares).
+Node 1 is the top; node `i` has children `2i` and `2i+1`; leaves are `leaves .. 2*leaves-1`. `Set(key, ringHash, valueHash)` picks the leaf with `leafOf` (a mixed version of the ring hash), XORs the old key hash out of the leaf hash and the new one in, then `rehash` walks up recomputing each parent as `mix(left, right)`. `Node.put` is the only way data is written, and it calls `Set` on the tree of the key's partition, so the trees always match the data (a test rebuilds trees from scratch and compares).
+
+**Three hashes, three jobs.** The code uses a different hash where a different job needs it:
+
+| Job | Where | Hash | Why |
+|---|---|---|---|
+| Where does a key live on the ring? | `hash64` in `ring/ring.go` | MD5 (first 8 bytes) | The paper uses MD5, and it spreads keys evenly (A1: CV 0.056 vs 0.401 for FNV-1a). Computed once per operation |
+| What is the fingerprint of one key's data? | `hashVersions` in `store/antientropy.go` | FNV-1a (`hash/fnv`) over the key and every version's value, dot, clock and timestamp | Runs on every write; needs to be cheap and deterministic, not attack-proof |
+| How do child fingerprints combine into a parent? | `mix` / `splitmix` in `merkle/merkle.go` | A few shifts and multiplies on 64-bit numbers (the finalizer of the SplitMix64 random generator) | Works on numbers, not bytes, so it needs no allocation. Mixing before combining makes `mix(a,b)` differ from `mix(b,a)` and keeps `mix(x,x)` from collapsing to 0 |
+
+None of these needs to resist an attacker: the worst a chance collision (about 1 in 2^64) can do is hide a difference until the next write to that leaf. Go's standard library has no Murmur3. `hash/maphash` is fast but its seed is random per process, which would break comparison between real machines.
 
 **Anti-entropy (`merkleSync` / `handleMerkle` / `handleLeaf`).** The starter sends its fingerprints for the root of every partition it shares with the peer; the peer answers with the ones that differ; the starter then sends the children of those, level by level, until only leaves remain; it sends the key hashes under the differing leaves; the peer replies with its versions of the keys whose hashes differ and the keys it wants; finally the starter pushes what the peer asked for:
 
 ```go
 // receiver: which of these tree nodes differ from mine?
 for i, ref := range r.Refs {
-    if nd.trees[ref.P].hash(ref.I) != r.Hashes[i] { diff = append(diff, ref) }
+    if nd.trees[ref.P].Hash(ref.I) != r.Hashes[i] { diff = append(diff, ref) }
 }
 ```
 
@@ -1150,11 +1160,13 @@ for _, v := range r.Versions {
 
 **`UnionResolver`.** Split every sibling on commas, put the items in a set, sort, and join. Sorting makes the answer the same no matter what order the siblings came in.
 
-### 14.10 The cluster (`store/cluster.go`, 234 lines)
+### 14.10 The cluster (`store/cluster.go`, 275 lines)
 
 **Building.** `NewCluster` names the nodes `n1`..`n5`, builds one ring, one network (seeded) and one node per name, registers each node's `handle` on the network, and starts each node's background loop.
 
 **Waiting for hints.** `WaitHintsDrained` checks every millisecond whether the total `HintCount()` across nodes is zero, up to a deadline.
+
+**Joining.** `AddNode` adds a node to a running cluster: it builds a new ring with `Ring.WithNode` (the newcomer takes about 20% of the copies, evenly spaced), creates and registers the node, then swaps the new ring into every node and client through an atomic pointer. Reads and writes keep going on whichever ring they already loaded. The newcomer starts empty and anti-entropy fills it (about two anti-entropy intervals; experiment X11). **Timeout.** `AutoTimeout` computes `ReplicaTimeout()` from the network delays.
 
 **Shutting down.** `Close` closes every node's `stop` channel and waits on its `WaitGroup`, so no background loop is left running.
 
@@ -1163,10 +1175,12 @@ for _, v := range r.Versions {
 | Test file | What it checks |
 |---|---|
 | `vclock/vclock_test.go` | `Compare` gives the right order, and `Increment` respects its floor |
-| `store/store_test.go` | Merge drops replaced versions; two concurrent writes through one coordinator stay siblings; a strict quorum reads its own write; a strict quorum refuses on the minority side; every partition scenario keeps its declared rule |
+| `store/store_test.go` | Merge drops replaced versions; two concurrent writes through one coordinator stay siblings; a strict quorum reads its own write; a strict quorum refuses on the minority side |
 | `store/concurrency_test.go` | Many clients writing the same key at once lose no acknowledged items |
 | `store/antientropy_test.go` | From random divergent states, one Merkle round leaves every replica identical to what full-state sync produces (25 seeds); a second round sends no keys; trees equal trees rebuilt from the data; a real partition with concurrent clients heals with no acknowledged write lost; the one-shot walk and the periodic loop converge |
-| `store/ring_test.go` | Fixed rings stay balanced; a key's partition does not change when a node joins; join and leave move about 20% of copies; Merkle also works on random vnodes |
+| `ring/ring_test.go`, `store/ring_test.go` | Fixed rings stay balanced; a key's partition does not change when a node joins; join and leave move about 20% of copies; Merkle also works on random vnodes |
+| `store/membership_test.go` | A node can join a live cluster without losing or hiding an acknowledged write |
+| `scenario/scenario_test.go` | Every partition scenario keeps its declared rule |
 | `store/store_test.go` | (also) hinted handoff delivers 150 hints (`TestHandoffDeliversManyHints`) |
 
 Run them with `go test -race ./...`. The `-race` flag makes Go watch for two goroutines touching the same memory without a lock, which is how the locking rules above are checked.
@@ -1180,7 +1194,7 @@ Run them with `go test -race ./...`. The `-race` flag makes Go watch for two gor
 | `go run ./cmd/demo` | The partition story above, for 5 settings. Exits with an error if a declared rule is broken | `results/demo.txt` |
 | `go run ./cmd/bench` | **E1** stale reads per (R, W); **E2** many clients writing the same keys concurrently (siblings, lost items, clock modes); **E3** availability and staleness during a partition, strict vs sloppy | `results/benchmark.md` |
 | `go run ./cmd/archbench` | **A1**–**A10**: evidence for design choices (ring balance and vnodes, sending the whole pile, repair helpers, random vs first coordinator, timeout length, Merkle vs full state, fixed partitions, how many partitions, tree walks) | `results/architecture.md` |
-| `go run ./cmd/bench -ablate` | **X1**–**X8**: noise, network speed, anti-entropy interval, node count, workload, handoff, read path, failures | `results/ablations.md` |
+| `go run ./cmd/bench -ablate` | **X1**–**X11**: noise, network speed, anti-entropy interval, node count, workload, handoff, read path, failures, sibling growth (X9), mixed R and W (X10), a node joining a live cluster (X11) | `results/ablations.md` |
 | `go run ./cmd/plots` | Redraws the charts (SVG) for E1–E3 and A1–A5 | `results/*.svg` |
 | `go test -race ./...` | Unit and scenario tests, with Go's race detector | |
 

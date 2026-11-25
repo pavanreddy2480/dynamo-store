@@ -601,7 +601,7 @@ getResp{
 
 ### 6.5 `merkleReq`: "here are my fingerprints for these tree nodes"
 
-Every partition of the ring has a small **tree of fingerprints** (hashes) over its keys, and the replicas of a partition keep identical trees. A tree node is named by a `nodeRef`: which partition, and which position in that partition's tree (position 1 is the top; node `i` has children `2i` and `2i+1`).
+Every partition of the ring has a small **tree of fingerprints** (hashes) over its keys (the tree code is `merkle/merkle.go`, 73 lines of code; a key's fingerprint is an FNV-1a hash of its versions, and a parent's fingerprint is `mix(left, right)`), and the replicas of a partition keep identical trees. A tree node is named by a `nodeRef`: which partition, and which position in that partition's tree (position 1 is the top; node `i` has children `2i` and `2i+1`).
 
 **Definition (complete):**
 
