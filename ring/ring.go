@@ -187,8 +187,9 @@ func NewFixedRing(nodes []string, q int) *Ring {
 }
 
 // WithNode returns a copy of a fixed ring after node id joins: it takes its
-// fair share (q/N') of the partitions, evenly spaced around the ring. Only
-// those partitions change owner.
+// fair share (q/N') of the partitions, always taken from the node that owns
+// the most, so every old node gives up about the same number. Only those
+// partitions change owner.
 //
 // Parameters:
 //   - id: the joining node.
@@ -202,14 +203,29 @@ func (r *Ring) WithNode(id string) *Ring {
 		n.owner[t] = o
 		count[o]++
 	}
-	// Take evenly spaced partitions: spacing them out keeps the new node's
-	// pieces apart, so its load is spread like the other nodes'. Donors
-	// lose partitions in proportion to how many they own. Balance after a
-	// join depends on how this stride interleaves with the old round-robin
-	// owners, which is why experiment A9 reports it for several Q.
+	// Take want partitions one at a time. Each time, the donor is the node
+	// that owns the most partitions right now (ties: lowest name), so every
+	// old node gives up a fair share whatever Q and N are. The cursor steps
+	// around the ring by q/want, which spreads the newcomer's pieces apart.
 	want := len(r.tokens) / len(n.nodes)
+	stride := len(r.tokens) / want
+	cursor := 0
 	for j := 0; j < want; j++ {
-		n.owner[n.tokens[j*len(n.tokens)/want]] = id
+		donor := ""
+		for _, o := range r.nodes {
+			if donor == "" || count[o] > count[donor] || (count[o] == count[donor] && o < donor) {
+				donor = o
+			}
+		}
+		for k := 0; k < len(n.tokens); k++ {
+			i := (cursor + k) % len(n.tokens)
+			if n.owner[n.tokens[i]] == donor {
+				n.owner[n.tokens[i]] = id
+				count[donor]--
+				cursor = i + stride
+				break
+			}
+		}
 	}
 	return n.index()
 }

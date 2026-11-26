@@ -52,3 +52,37 @@ func TestPartitionOfKeyStableAcrossJoin(t *testing.T) {
 		}
 	}
 }
+
+// TestWithNodeIsFair checks that a join takes only the newcomer's share, that
+// nothing moves between old nodes, and that every node ends within one
+// partition of the average, for several node counts and partition counts.
+func TestWithNodeIsFair(t *testing.T) {
+	for _, q := range []int{64, 100, 256, 500} {
+		ids := []string{"n1", "n2", "n3", "n4"}
+		r := NewFixedRing(ids, q)
+		for _, nn := range []string{"n5", "n6", "n7", "n8"} {
+			r2 := r.WithNode(nn)
+			cnt := map[string]int{}
+			for i, tk := range r2.tokens {
+				o := r2.owner[tk]
+				cnt[o]++
+				if o != r.owner[r.tokens[i]] && o != nn {
+					t.Fatalf("q=%d join %s: partition %d moved between old nodes", q, nn, i)
+				}
+			}
+			lo, hi := q, 0
+			for _, c := range cnt {
+				if c < lo {
+					lo = c
+				}
+				if c > hi {
+					hi = c
+				}
+			}
+			if hi-lo > 1 {
+				t.Fatalf("q=%d join %s: uneven shares %v", q, nn, cnt)
+			}
+			r = r2
+		}
+	}
+}
